@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>计算机网络实验：吞吐量与瓶颈链路演示</title>
+    <style>
+        /* ================= 基础样式与布局 ================= */
+        :root {
+            --primary-color: #2563eb;
+            --bg-color: #f4f6f8;
+            --panel-bg: #ffffff;
+            --text-main: #1a202c;
+            --text-sub: #64748b;
+            --border-color: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 标题区 */
+        header {
+            padding: 16px 24px;
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        header h1 { font-size: 20px; }
+        header p { font-size: 13px; color: var(--text-sub); margin-top: 4px; }
+
+        /* 主内容区 */
+        main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* 左侧：拓扑与动画区 */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: #0f172a; /* 深色背景突出动画 */
+            display: flex;
+            flex-direction: column;
+        }
+        canvas {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        /* 图例区 */
+        .legend {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.1);
+            color: #e2e8f0;
+            font-size: 12px;
+            display: flex;
+            gap: 20px;
+            border-top: 1px solid rgba(255,255,255,0.2);
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+
+        /* 右侧：控制与信息面板 */
+        .sidebar {
+            width: 320px;
+            background: var(--panel-bg);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .panel-section {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            background: #fafafa;
+        }
+        .panel-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: var(--primary-color);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 6px;
+        }
+
+        /* 控制面板按钮 */
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        button {
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: var(--primary-color);
+            color: white;
+            cursor: pointer;
+            font-size: 13px;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        button:disabled { background: #cbd5e1; cursor: not-allowed; }
+        button.secondary { background: #64748b; }
+        
+        .speed-control {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+        input[type="range"] { flex: 1; }
+
+        /* 步骤说明区 */
+        #step-desc {
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-main);
+            background: #eff6ff;
+            padding: 10px;
+            border-radius: 6px;
+            border-left: 4px solid var(--primary-color);
+            min-height: 60px;
+        }
+
+        /* 信息面板区 */
+        #info-content {
+            font-size: 13px;
+            font-family: Consolas, monospace;
+            color: var(--text-sub);
+            line-height: 1.6;
+        }
+        .info-row { display: flex; justify-content: space-between; border-bottom: 1px dashed var(--border-color); padding: 2px 0; }
+        .info-label { font-weight: bold; color: var(--text-main); }
+
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>实验：吞吐量与瓶颈链路 (Throughput & Bottleneck Link)</h1>
+    <p>注：此处为简化演示。忽略了传播时延、处理时延与协议头部开销，仅聚焦于链路带宽对端到端吞吐量的限制。</p>
+</header>
+
+<main>
+    <!-- 网络拓扑与动画区 -->
+    <div class="canvas-container">
+        <canvas id="networkCanvas"></canvas>
+        <div class="legend">
+            <div class="legend-item"><div class="legend-color" style="background:#4ade80;"></div> 主机 (Host)</div>
+            <div class="legend-item"><div class="legend-color" style="background:#60a5fa; border-radius:50%;"></div> 路由器 (Router)</div>
+            <div class="legend-item"><div class="legend-color" style="background:#f87171;"></div> 瓶颈链路 (10 Mbps)</div>
+            <div class="legend-item"><div class="legend-color" style="background:#94a3b8;"></div> 高速链路 (100 Mbps)</div>
+            <div class="legend-item"><div class="legend-color" style="background:#fbbf24; border-radius:50%;"></div> 数据包 (Packet)</div>
+        </div>
+    </div>
+
+    <!-- 右侧面板 -->
+    <div class="sidebar">
+        <!-- 控制面板 -->
+        <div class="panel-section">
+            <div class="panel-title">控制面板</div>
+            <div class="controls">
+                <button id="btnPlay">播放</button>
+                <button id="btnPause" disabled>暂停</button>
+                <button id="btnStep" class="secondary">单步执行</button>
+                <button id="btnReset" class="secondary">重置</button>
+            </div>
+            <div class="speed-control">
+                <span>速度:</span>
+                <input type="range" id="speedSlider" min="0.5" max="3" step="0.5" value="1">
+                <span id="speedVal">1.0x</span>
+            </div>
+        </div>
+
+        <!-- 当前步骤说明区 -->
+        <div class="panel-section">
+            <div class="panel-title">当前步骤说明</div>
+            <div id="step-desc">准备就绪。点击“播放”或“单步执行”开始实验。</div>
+        </div>
+
+        <!-- 信息面板区 -->
+        <div class="panel-section" style="flex:1;">
+            <div class="panel-title">详细信息 (点击节点或数据包)</div>
+            <div id="info-content">
+                <div class="info-row"><span class="info-label">状态</span><span>等待交互</span></div>
+                <div class="info-row"><span class="info-label">提示</span><span>点击拓扑图中的设备或移动中的数据包以查看协议字段。</span></div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+/**
+ * =====================================================================
+ * 实验配置与步骤定义 (STEPS ARRAY)
+ * 您可以通过修改此数组来更换实验流程、链路带宽或数据包数量。
+ * =====================================================================
+ */
+const STEPS = [
+    {
+        type: "info",
+        text: "步骤 1/5：初始化拓扑。链路带宽：源->R1 (100Mbps), R1->R2 (10Mbps), R2->目的 (100Mbps)。",
+        highlight: null
+    },
+    {
+        type: "send",
+        text: "步骤 2/5：源主机以 100Mbps 速率发送 3 个数据包。在高速链路上，数据包快速移动。",
+        count: 3,
+        linkIndex: 0,
+        speed: 1.5 // 相对速度因子，体现 100Mbps
+    },
+    {
+        type: "traverse",
+        text: "步骤 3/5：数据包到达路由器 A。进入 10Mbps 瓶颈链路。注意观察移动速度显著变慢。",
+        linkIndex: 1,
+        speed: 0.15 // 相对速度因子，体现 10Mbps 瓶颈
+    },
+    {
+        type: "traverse",
+        text: "步骤 4/5：数据包离开瓶颈链路，进入目的主机前的高速链路，恢复快速移动。",
+        linkIndex: 2,
+        speed: 1.5
+    },
+    {
+        type: "conclude",
+        text: "步骤 5/5：实验结论。端到端吞吐量受限于瓶颈链路。吞吐量 = min(100, 10, 100) = 10 Mbps。",
+        highlight: 1
+    }
+];
+
+/**
+ * 网络拓扑配置
+ */
+const TOPOLOGY = {
+    nodes: [
+        { id: "src", type: "host", label: "源主机", x: 0.1, y: 0.5 },
+        { id: "r1",  type: "router", label: "路由器 A", x: 0.35, y: 0.5 },
+        { id: "r2",  type: "router", label: "路由器 B", x: 0.65, y: 0.5 },
+        { id: "dst", type: "host", label: "目的主机", x: 0.9, y: 0.5 }
+    ],
+    links: [
+        { id: 0, from: "src", to: "r1", bandwidth: "100 Mbps", color: "#94a3b8" },
+        { id: 1, from: "r1", to: "r2", bandwidth: "10 Mbps", color: "#f87171" },
+        { id: 2, from: "r2", to: "dst", bandwidth: "100 Mbps", color: "#94a3b8" }
+    ]
+};
+
+/**
+ * =====================================================================
+ * 核心逻辑与状态管理
+ * =====================================================================
+ */
+const canvas = document.getElementById('networkCanvas');
+const ctx = canvas.getContext('2d');
+const infoContent = document.getElementById('info-content');
+const stepDesc = document.getElementById('step-desc');
+
+// 按钮引用
+const btnPlay = document.getElementById('btnPlay');
+const btnPause = document.getElementById('btnPause');
+const btnStep = document.getElementById('btnStep');
+const btnReset = document.getElementById('btnReset');
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+
+// 全局状态
+let state = {
+    currentStepIndex: -1,
+    isPlaying: false,
+    isAnimating: false,
+    globalSpeed: 1.0,
+    packets: [],
+    lastTime: 0
+};
+
+// 数据包类
+class Packet {
+    constructor(id, linkIndex, speedFactor) {
+        this.id = id;
+        this.seq = id;
+        this.size = "1500 Bytes";
+        this.src = "192.168.1.10";
+        this.dst = "203.0.113.5";
+        this.linkIndex = linkIndex;
+        this.progress = 0; // 0 到 1
+        this.speedFactor = speedFactor;
+        this.isDone = false;
+    }
+}
+
+/**
+ * 调整 Canvas 尺寸以适配窗口
+ */
+function resizeCanvas() {
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight - document.querySelector('.legend').offsetHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+/**
+ * 获取节点在 Canvas 上的实际坐标
+ */
+function getNodeCoords(nodeId) {
+    const node = TOPOLOGY.nodes.find(n => n.id === nodeId);
+    return { x: node.x * canvas.width, y: node.y * canvas.height };
+}
+
+/**
+ * =====================================================================
+ * 渲染逻辑
+ * =====================================================================
+ */
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. 绘制链路
+    TOPOLOGY.links.forEach(link => {
+        const from = getNodeCoords(link.from);
+        const to = getNodeCoords(link.to);
+        
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.strokeStyle = link.color;
+        ctx.lineWidth = link.id === 1 ? 6 : 3; // 瓶颈链路加粗显示
+        ctx.stroke();
+
+        // 绘制带宽标签
+        const midX = (from.x + to.x) / 2;
+        const midY = (from.y + to.y) / 2 - 10;
+        ctx.fillStyle = link.color;
+        ctx.font = "12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(link.bandwidth, midX, midY);
+    });
+
+    // 2. 绘制节点
+    TOPOLOGY.nodes.forEach(node => {
+        const { x, y } = getNodeCoords(node.id);
+        ctx.beginPath();
+        if (node.type === 'host') {
+            ctx.rect(x - 15, y - 15, 30, 30);
+            ctx.fillStyle = "#14532d";
+            ctx.strokeStyle = "#4ade80";
+        } else {
+            ctx.arc(x, y, 15, 0, Math.PI * 2);
+            ctx.fillStyle = "#1e293b";
+            ctx.strokeStyle = "#60a5fa";
+        }
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 节点标签
+        ctx.fillStyle = "#e2e8f0";
+        ctx.font = "12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(node.label, x, y + 30);
+    });
+
+    // 3. 绘制数据包
+    state.packets.forEach(pkt => {
+        if (pkt.isDone) return;
+        const link = TOPOLOGY.links[pkt.linkIndex];
+        const from = getNodeCoords(link.from);
+        const to = getNodeCoords(link.to);
+        
+        const x = from.x + (to.x - from.x) * pkt.progress;
+        const y = from.y + (to.y - from.y) * pkt.progress;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = "#fbbf24";
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // 数据包标签 (简化演示：显示 Seq)
+        ctx.fillStyle = "#fff";
+        ctx.font = "10px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(pkt.seq, x, y + 3);
+    });
+}
+
+/**
+ * =====================================================================
+ * 动画与步骤执行逻辑
+ * =====================================================================
+ */
+function update(timestamp) {
+    if (!state.lastTime) state.lastTime = timestamp;
+    const dt = (timestamp - state.lastTime) / 1000; // 秒
+    state.lastTime = timestamp;
+
+    if (state.isAnimating) {
+        const step = STEPS[state.currentStepIndex];
+        let allDone = true;
+
+        if (step.type === 'send' || step.type === 'traverse') {
+            state.packets.forEach(pkt => {
+                if (!pkt.isDone && pkt.linkIndex === step.linkIndex) {
+                    // 根据链路速度因子和全局速度更新进度
+                    pkt.progress += dt * pkt.speedFactor * state.globalSpeed * 0.5; 
+                    if (pkt.progress >= 1) {
+                        pkt.progress = 1;
+                        pkt.isDone = true;
+                    } else {
+                        allDone = false;
+                    }
+                }
+            });
+            
+            if (allDone) {
+                finishStep();
+            }
+        } else {
+            // 非动画步骤直接完成
+            finishStep();
+        }
+    }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function finishStep() {
+    state.isAnimating = false;
+    if (state.isPlaying) {
+        setTimeout(nextStep, 500); // 播放模式下短暂停顿后进入下一步
+    } else {
+        updateButtons();
+    }
+}
+
+function executeStep(index) {
+    if (index < 0 || index >= STEPS.length) return;
+    
+    state.currentStepIndex = index;
+    const step = STEPS[index];
+    
+    // 更新步骤说明区
+    stepDesc.textContent = step.text;
+
+    // 根据步骤类型初始化状态
+    if (step.type === 'send') {
+        state.packets = [];
+        for (let i = 1; i <= step.count; i++) {
+            // 简化演示：数据包依次进入链路，此处为简化处理为同时进入但错开初始进度
+            const pkt = new Packet(i, step.linkIndex, step.speed);
+            pkt.progress = - (i - 1) * 0.2; // 错开位置，模拟连续发送
+            state.packets.push(pkt);
+        }
+        state.isAnimating = true;
+    } else if (step.type === 'traverse') {
+        // 将现有数据包移动到下一链路
+        state.packets.forEach(pkt => {
+            pkt.linkIndex = step.linkIndex;
+            pkt.speedFactor = step.speed;
+            pkt.progress = 0;
+            pkt.isDone = false;
+        });
+        state.isAnimating = true;
+    } else {
+        // info 或 conclude 步骤
+        state.isAnimating = false;
+        finishStep();
+    }
+    updateButtons();
+}
+
+function nextStep() {
+    if (state.currentStepIndex < STEPS.length - 1) {
+        executeStep(state.currentStepIndex + 1);
+    } else {
+        state.isPlaying = false;
+        updateButtons();
+    }
+}
+
+/**
+ * =====================================================================
+ * 交互控制逻辑
+ * =====================================================================
+ */
+function updateButtons() {
+    btnPlay.disabled = state.isPlaying || state.isAnimating;
+    btnPause.disabled = !state.isPlaying;
+    btnStep.disabled = state.isAnimating;
+    btnReset.disabled = false;
+}
+
+btnPlay.addEventListener('click', () => {
+    state.isPlaying = true;
+    if (state.currentStepIndex === -1 || state.currentStepIndex >= STEPS.length - 1) {
+        resetExperiment();
+    }
+    nextStep();
+    updateButtons();
+});
+
+btnPause.addEventListener('click', () => {
+    state.isPlaying = false;
+    updateButtons();
+});
+
+btnStep.addEventListener('click', () => {
+    state.isPlaying = false;
+    if (state.currentStepIndex === -1 || state.currentStepIndex >= STEPS.length - 1) {
+        resetExperiment();
+    }
+    nextStep();
+});
+
+btnReset.addEventListener('click', resetExperiment);
+
+speedSlider.addEventListener('input', (e) => {
+    state.globalSpeed = parseFloat(e.target.value);
+    speedVal.textContent = state.globalSpeed.toFixed(1) + 'x';
+});
+
+function resetExperiment() {
+    state.currentStepIndex = -1;
+    state.isPlaying = false;
+    state.isAnimating = false;
+    state.packets = [];
+    stepDesc.textContent = "准备就绪。点击“播放”或“单步执行”开始实验。";
+    infoContent.innerHTML = '<div class="info-row"><span class="info-label">状态</span><span>等待交互</span></div>';
+    updateButtons();
+    draw();
+}
+
+/**
+ * 点击检测：显示节点或数据包信息
+ */
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // 1. 检测数据包
+    for (const pkt of state.packets) {
+        if (pkt.isDone) continue;
+        const link = TOPOLOGY.links[pkt.linkIndex];
+        const from = getNodeCoords(link.from);
+        const to = getNodeCoords(link.to);
+        const x = from.x + (to.x - from.x) * pkt.progress;
+        const y = from.y + (to.y - from.y) * pkt.progress;
+
+        if (Math.hypot(mouseX - x, mouseY - y) < 10) {
+            infoContent.innerHTML = `
+                <div class="info-row"><span class="info-label">类型</span><span>数据包 (Packet)</span></div>
+                <div class="info-row"><span class="info-label">序列号 (Seq)</span><span>${pkt.seq}</span></div>
+                <div class="info-row"><span class="info-label">大小 (Size)</span><span>${pkt.size}</span></div>
+                <div class="info-row"><span class="info-label">源地址</span><span>${pkt.src}</span></div>
+                <div class="info-row"><span class="info-label">目的地址</span><span>${pkt.dst}</span></div>
+                <div class="info-row"><span class="info-label">当前链路</span><span>Link ${pkt.linkIndex} (${link.bandwidth})</span></div>
+                <div class="info-row"><span class="info-label">进度</span><span>${(pkt.progress * 100).toFixed(0)}%</span></div>
+                <p style="margin-top:8px; font-size:11px; color:#64748b;">注：协议字段为简化演示生成。</p>
+            `;
+            return;
+        }
+    }
+
+    // 2. 检测节点
+    for (const node of TOPOLOGY.nodes) {
+        const { x, y } = getNodeCoords(node.id);
+        if (Math.hypot(mouseX - x, mouseY - y) < 20) {
+            infoContent.innerHTML = `
+                <div class="info-row"><span class="info-label">类型</span><span>${node.type === 'host' ? '主机 (Host)' : '路由器 (Router)'}</span></div>
+                <div class="info-row"><span class="info-label">名称</span><span>${node.label}</span></div>
+                <div class="info-row"><span class="info-label">ID</span><span>${node.id}</span></div>
+                <div class="info-row"><span class="info-label">状态</span><span>运行中</span></div>
+            `;
+            return;
+        }
+    }
+});
+
+// 启动动画循环
+requestAnimationFrame(update);
+resetExperiment();
+
+</script>
+</body>
+</html>
