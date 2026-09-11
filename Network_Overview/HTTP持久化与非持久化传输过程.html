@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP 非持久连接 vs 持久连接 · 可交互动画演示</title>
+<style>
+/* ============================================================
+   CSS 变量与全局基础（浅色主题）
+   ============================================================ */
+:root{
+  --bg:#edf1f7;          /* 页面背景：浅灰蓝 */
+  --panel:#ffffff;       /* 卡片底色 */
+  --panel2:#f5f8fc;      /* 次级面板 / 图标底 */
+  --line:#dbe4f0;        /* 边框 */
+  --txt:#1d2739;         /* 主文字 */
+  --dim:#5b6b87;         /* 次要文字 */
+  --faint:#97a3ba;       /* 微弱文字 */
+  --client:#2563eb;      /* 客户端：蓝 */
+  --server:#7c3aed;      /* 服务器：紫 */
+  --c-hand:#0891b2;      /* 三次握手：青 */
+  --c-req:#d97706;       /* HTTP 请求：琥珀 */
+  --c-res:#059669;       /* HTTP 响应：绿 */
+  --c-fin:#db2777;       /* 挥手关闭：粉 */
+  --mono:'Cascadia Code','JetBrains Mono','Consolas',monospace;
+  --r:10px;
+  --shadow:0 1px 3px rgba(29,39,57,.06),0 4px 14px rgba(29,39,57,.05);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt);
+  font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  /* 分层背景：细网格 + 顶部微光（浅色版） */
+  background-image:
+    radial-gradient(1200px 400px at 50% -80px, rgba(37,99,235,.07), transparent),
+    linear-gradient(rgba(29,39,57,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29,39,57,.045) 1px, transparent 1px);
+  background-size:auto,44px 44px,44px 44px;
+  padding:22px 26px 40px;
+}
+
+/* ============================================================ 标题区 */
+header{margin-bottom:18px}
+header h1{font-size:27px;font-weight:800;letter-spacing:.5px}
+header h1 .accent{color:var(--c-hand)}
+header p{color:var(--dim);font-size:14px;margin-top:6px;max-width:980px;line-height:1.6}
+header .tags{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+header .tags span{font-family:var(--mono);font-size:11px;color:var(--dim);
+  border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:3px 10px}
+
+/* ============================================================ 布局 */
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:18px}
+@media(max-width:1100px){.layout{grid-template-columns:1fr}}
+
+/* ============================================================ 控制面板 */
+.controls{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:16px;box-shadow:var(--shadow);
+}
+.btn{
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
+  background:#fff;color:var(--txt);border:1px solid var(--line);
+  border-radius:8px;padding:8px 15px;font-size:14px;font-weight:600;
+  transition:transform .12s,border-color .12s,background .12s,box-shadow .12s;
+}
+.btn:hover{border-color:var(--c-hand);box-shadow:0 2px 8px rgba(8,145,178,.15);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn.primary{background:var(--c-hand);color:#fff;border-color:var(--c-hand)}
+.btn.primary:hover{background:#0aa2c6}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+.speed-wrap{display:flex;align-items:center;gap:9px;margin-left:auto;color:var(--dim);font-size:13px}
+.speed-wrap input[type=range]{width:130px;accent-color:var(--c-hand)}
+.speed-val{font-family:var(--mono);color:var(--c-hand);min-width:42px;text-align:right;font-weight:700}
+
+/* ============================================================ 泳道与场景 */
+.lane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 16px;margin-bottom:16px;position:relative;overflow:hidden;box-shadow:var(--shadow)}
+.lane::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px}
+.lane.np::before{background:var(--c-fin)}
+.lane.ps::before{background:var(--c-res)}
+.lane-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.lane-head h2{font-size:16px;font-weight:700}
+.lane.np h2{color:var(--c-fin)} .lane.ps h2{color:var(--c-res)}
+.lane-head .meta{font-size:12px;color:var(--dim);font-family:var(--mono)}
+.lane-head .progress-track{flex:1;min-width:120px;height:6px;background:var(--panel2);
+  border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+.lane-head .progress-bar{height:100%;width:0;border-radius:99px;transition:width .3s}
+.lane.np .progress-bar{background:var(--c-fin)} .lane.ps .progress-bar{background:var(--c-res)}
+.lane-status{font-size:12px;font-family:var(--mono);color:var(--dim)}
+
+.scene{position:relative;height:200px;margin-top:6px}
+.scene.short{height:150px}
+
+/* 节点（客户端 / 服务器） */
+.node{position:absolute;top:50%;transform:translateY(-50%);text-align:center;cursor:pointer;z-index:5;
+  transition:filter .15s}
+.node:hover{filter:brightness(1.06)}
+.node.client{left:14px} .node.server{right:14px}
+.node .icon{width:74px;height:60px;border-radius:8px;border:2px solid;position:relative;
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;
+  background:var(--panel2);transition:box-shadow .3s,border-color .3s}
+.node.client .icon{border-color:var(--client);color:var(--client)}
+.node.server .icon{border-color:var(--server);color:var(--server)}
+.node .icon.pulse{box-shadow:0 0 0 0 rgba(37,99,235,.35);animation:pulse .9s}
+@keyframes pulse{from{box-shadow:0 0 0 0 rgba(37,99,235,.3)}to{box-shadow:0 0 0 16px rgba(37,99,235,0)}}
+.node .label{margin-top:6px;font-size:12px;font-weight:600}
+.node .status{font-size:10.5px;color:var(--dim);font-family:var(--mono);min-height:14px;max-width:96px}
+.led-row{display:flex;gap:5px;position:absolute;top:8px;left:10px}
+.led{width:8px;height:8px;border-radius:50%;background:#d4dce8}
+.led.on{background:var(--c-res);box-shadow:0 0 6px rgba(5,150,105,.6)}
+
+/* 链路 */
+.link{position:absolute;left:104px;right:104px;height:3px;border-radius:2px;
+  background:#c9d4e4;transition:background .35s,box-shadow .35s}
+.link.active{background:var(--c-hand);box-shadow:0 0 8px rgba(8,145,178,.35)}
+.link.busy{background:repeating-linear-gradient(90deg,var(--c-hand) 0 10px,transparent 10px 20px);
+  animation:flow .6s linear infinite;box-shadow:0 0 8px rgba(8,145,178,.3)}
+.link.closed{background:#e2e8f1}
+@keyframes flow{to{background-position:20px 0}}
+.link .tag{position:absolute;left:50%;top:-16px;transform:translateX(-50%);
+  font-size:10px;font-family:var(--mono);color:var(--faint);white-space:nowrap}
+
+/* 数据包（饱和底 + 白字，浅色背景下醒目） */
+.packet{position:absolute;transform:translate(-50%,-50%);z-index:8;cursor:pointer;
+  font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 9px;border-radius:6px;
+  color:#fff;border:1px solid rgba(0,0,0,.12);white-space:nowrap;transition:opacity .4s;
+  box-shadow:0 2px 8px rgba(29,39,57,.18)}
+.packet:hover{filter:brightness(1.12);transform:translate(-50%,-58%)}
+.packet.handshake{background:var(--c-hand)}
+.packet.request{background:var(--c-req)}
+.packet.response{background:var(--c-res)}
+.packet.finish{background:var(--c-fin)}
+.packet.arrived{animation:land .45s}
+@keyframes land{0%{filter:brightness(1.6)}100%{filter:brightness(1)}}
+.packet.fade{opacity:0}
+
+/* ============================================================ 事件日志 */
+.log-panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow)}
+.log-panel h3{font-size:14px;margin-bottom:8px;color:var(--dim);font-weight:700}
+.log-list{max-height:170px;overflow-y:auto;font-family:var(--mono);font-size:12px}
+.log-item{display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:6px;cursor:pointer;color:var(--dim)}
+.log-item:hover{background:var(--panel2);color:var(--txt)}
+.log-item .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.log-item .lane-tag{font-size:10px;border:1px solid var(--line);border-radius:4px;padding:0 5px;flex:none;color:var(--dim)}
+
+/* ============================================================ 右侧信息面板 */
+aside .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:15px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+aside h3{font-size:13px;color:var(--dim);font-weight:700;letter-spacing:.5px;
+  text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+
+/* —— 拆分后的两个步骤说明区块 —— */
+.step-block{border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:10px;
+  transition:background .25s}
+.step-block:last-child{margin-bottom:0}
+.step-block.np{border-left:4px solid var(--c-fin)}
+.step-block.ps{border-left:4px solid var(--c-res)}
+.step-block.recent{background:var(--panel2)}
+.sb-head{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;margin-bottom:6px}
+.step-block.np .sb-head{color:var(--c-fin)}
+.step-block.ps .sb-head{color:var(--c-res)}
+.sb-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.step-block.np .sb-dot{background:var(--c-fin)}
+.step-block.ps .sb-dot{background:var(--c-res)}
+.sb-counter{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:4px}
+.sb-title{font-size:14px;font-weight:700;margin-bottom:4px}
+.sb-desc{font-size:12.5px;color:var(--dim);line-height:1.6}
+
+.detail-empty{color:var(--faint);font-size:13px;font-style:italic}
+.kv{width:100%;border-collapse:collapse;font-size:12.5px}
+.kv td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.kv td:first-child{color:var(--dim);width:42%;font-family:var(--mono)}
+.kv td:last-child{font-family:var(--mono);color:var(--txt);word-break:break-all}
+.detail-src{margin-top:8px;font-size:11px;color:var(--faint);font-family:var(--mono)}
+
+/* 图例 */
+.legend{display:flex;flex-direction:column;gap:8px}
+.legend .li{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--dim)}
+.legend .sw{width:26px;height:14px;border-radius:4px;border:1px solid rgba(0,0,0,.1)}
+.sw.hand{background:var(--c-hand)} .sw.req{background:var(--c-req)}
+.sw.res{background:var(--c-res)} .sw.fin{background:var(--c-fin)}
+.sw.linkidle{background:#c9d4e4} .sw.linkbusy{background:repeating-linear-gradient(90deg,var(--c-hand) 0 6px,transparent 6px 12px)}
+
+footer{margin-top:20px;font-size:12px;color:var(--faint);line-height:1.8;max-width:1000px}
+footer b{color:var(--dim)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#c3cede;border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════ 1. 标题区 ══════════════════ -->
+<header>
+  <h1>HTTP <span class="accent">非持久连接</span> vs <span class="accent">持久连接</span> · Web 页面传输过程动画演示</h1>
+  <p>客户端请求一个包含 <b style="color:var(--txt)">1 个基本 HTML 文件 + 2 个引用图片对象</b> 的页面。左侧两条泳道同步推进：
+     上方为每个对象单独建立/关闭 TCP 连接的非持久方式，下方为仅建立一次连接并复用的持久方式。观察两者在报文数量与完成时间上的显著差异。</p>
+  <div class="tags">
+    <span>场景假设：串行请求（未启用管线化）· 简化演示</span>
+    <span>忽略 DNS / ARP 等前置步骤 · 简化演示</span>
+    <span>挥手中 ACK 与 FIN 合并展示 · 简化演示</span>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ══════════════════ 左侧：控制 + 动画 + 日志 ══════════════════ -->
+  <div>
+    <!-- 3. 控制面板区 -->
+    <div class="controls">
+      <button class="btn primary" id="btnPlay">▶ 播放</button>
+      <button class="btn" id="btnPause" disabled>⏸ 暂停</button>
+      <button class="btn" id="btnStep">⏭ 单步</button>
+      <button class="btn" id="btnReset">⟲ 重置</button>
+      <div class="speed-wrap">
+        <span>速度</span>
+        <input type="range" id="speed" min="0.25" max="3" step="0.25" value="1">
+        <span class="speed-val" id="speedVal">1×</span>
+      </div>
+    </div>
+
+    <!-- 2. 实验场景区：非持久连接泳道 -->
+    <section class="lane np">
+      <div class="lane-head">
+        <h2>非持久连接</h2>
+        <span class="meta">每个对象独立建立并关闭 TCP 连接（HTTP/1.0 默认）</span>
+        <div class="progress-track"><div class="progress-bar" id="npBar"></div></div>
+        <span class="lane-status" id="npStatus">待开始</span>
+      </div>
+      <div class="scene" id="npScene">
+        <div class="node client" data-node="client-np">
+          <div class="icon">Client</div>
+          <div class="label">客户端（浏览器）</div><div class="status" id="npClientStatus">空闲</div>
+        </div>
+        <div class="link" id="npLink0" style="top:52px"><span class="tag">连接① index.html</span></div>
+        <div class="link" id="npLink1" style="top:100px"><span class="tag">连接② img1.gif</span></div>
+        <div class="link" id="npLink2" style="top:148px"><span class="tag">连接③ img2.gif</span></div>
+        <div class="node server" data-node="server-np">
+          <div class="icon">Server<div class="led-row"><span class="led" id="npLed0"></span><span class="led" id="npLed1"></span><span class="led" id="npLed2"></span></div></div>
+          <div class="label">Web 服务器 :80</div><div class="status" id="npServerStatus">空闲</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 实验场景区：持久连接泳道 -->
+    <section class="lane ps">
+      <div class="lane-head">
+        <h2>持久连接</h2>
+        <span class="meta">一次握手，复用连接传送全部对象（HTTP/1.1 默认）</span>
+        <div class="progress-track"><div class="progress-bar" id="psBar"></div></div>
+        <span class="lane-status" id="psStatus">待开始</span>
+      </div>
+      <div class="scene short" id="psScene">
+        <div class="node client" data-node="client-ps">
+          <div class="icon">Client</div>
+          <div class="label">客户端（浏览器）</div><div class="status" id="psClientStatus">空闲</div>
+        </div>
+        <div class="link" id="psLink0" style="top:75px"><span class="tag">连接①（复用）</span></div>
+        <div class="node server" data-node="server-ps">
+          <div class="icon">Server<div class="led-row"><span class="led" id="psLed0"></span></div></div>
+          <div class="label">Web 服务器 :80</div><div class="status" id="psServerStatus">空闲</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 事件日志（报文时间线，可点击查看字段） -->
+    <div class="log-panel">
+      <h3>报文事件日志（点击任意条目查看字段）</h3>
+      <div class="log-list" id="logList"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ 右侧：信息面板 ══════════════════ -->
+  <aside>
+    <!-- 6. 当前步骤说明区（拆分为非持久 / 持久两块） -->
+    <div class="card">
+      <h3>📋 当前步骤说明</h3>
+      <div class="step-block np" id="sbNp">
+        <div class="sb-head"><span class="sb-dot"></span>非持久连接</div>
+        <div class="sb-counter" id="npStepCounter">尚未开始</div>
+        <div class="sb-title" id="npStepTitle">等待开始</div>
+        <div class="sb-desc" id="npStepDesc">共 25 步：每个对象独立握手与挥手。</div>
+      </div>
+      <div class="step-block ps" id="sbPs">
+        <div class="sb-head"><span class="sb-dot"></span>持久连接</div>
+        <div class="sb-counter" id="psStepCounter">尚未开始</div>
+        <div class="sb-title" id="psStepTitle">等待开始</div>
+        <div class="sb-desc" id="psStepDesc">共 13 步：一次握手，复用连接。</div>
+      </div>
+    </div>
+
+    <!-- 4. 信息面板区 -->
+    <div class="card">
+      <h3>🔍 详细信息面板</h3>
+      <div id="detailBody"><div class="detail-empty">点击客户端 / 服务器节点，或点击移动中的数据包、事件日志条目，此处将显示详细信息。</div></div>
+    </div>
+
+    <!-- 5. 图例区 -->
+    <div class="card">
+      <h3>🎨 图例</h3>
+      <div class="legend">
+        <div class="li"><span class="sw hand"></span>TCP 握手报文（SYN / SYN+ACK / ACK）</div>
+        <div class="li"><span class="sw req"></span>HTTP 请求（GET）</div>
+        <div class="li"><span class="sw res"></span>HTTP 响应（200 OK + 对象）</div>
+        <div class="li"><span class="sw fin"></span>TCP 连接关闭（FIN / ACK）</div>
+        <div class="li"><span class="sw linkidle"></span>空闲 / 未使用的链路</div>
+        <div class="li"><span class="sw linkbusy"></span>正在传输的链路（流动动画）</div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ══════════════════ 教学说明与简化标注 ══════════════════ -->
+<footer>
+  <b>教学正确性说明：</b>
+  ① 非持久连接中，每传送一个对象都需完整经历"三次握手 → 请求 → 响应 → 关闭连接"，开销随对象数量线性增长。
+  ② 持久连接只需一次握手，后续对象复用同一连接，显著减少报文数与往返时延。
+  ③ 按教材（Kurose《自顶向下方法》）估算：非持久 ≈ 2 RTT/对象（共 6 RTT）；持久（非流水）≈ 1 RTT 建立 + 1 RTT/对象（共 4 RTT）。
+  ④ <b>简化标注：</b>本演示假设页面仅含 2 张引用图片且串行请求（实际浏览器可能并行，且未涉及管线化）；
+  挥手中将服务端的 ACK 与 FIN 合并为单个"ACK+FIN"报文展示（协议中二者可为两个独立报文）；
+  未展示 DNS 解析、TCP 之前的 ARP/IP 路由等过程。以上均为简化演示，不影响对连接模式核心差异的理解。
+</footer>
+
+<script>
+/* ============================================================
+   HTTP 非持久连接 / 持久连接 动画演示
+   —— 数据驱动：修改 STEPS_NON_PERSISTENT / STEPS_PERSISTENT
+      两个数组即可替换实验流程，动画引擎无需改动。
+   ============================================================ */
+(function(){
+'use strict';
+
+/* ---------- 全局配置 ---------- */
+const CONFIG = {
+  travelTime: 1400,   // 数据包横穿链路的基准耗时（ms，1× 速度）
+  holdTime: 1600,     // 数据包到达后保留时间（ms）
+  clientX: 9,         // 客户端一侧的数据包起止横坐标（%）
+  serverX: 91         // 服务器一侧的数据包起止横坐标（%）
+};
+
+/* ---------- 报文颜色分类 ---------- */
+const KIND_CLASS = { handshake:'handshake', request:'request', response:'response', finish:'finish' };
+const KIND_COLOR = { handshake:'#0891b2', request:'#d97706', response:'#059669', finish:'#db2777' };
+
+/* ---------- 每条链路的垂直坐标（相对场景，单位 px） ---------- */
+const LANE_Y = { np:[52,100,148], ps:[75] };
+
+/* ============================================================
+   步骤数组：非持久连接（每个对象独立建立并关闭连接）
+   场景：1 个 index.html + 2 张图片，串行请求（简化演示）。
+   每步一个报文；fields 为该报文关键字段（示例值）。
+   ============================================================ */
+const STEPS_NON_PERSISTENT = [
+  {t:'非持久 · 步骤 1/25 · 连接① 握手',d:'客户端发送 SYN 报文，请求与服务器 80 端口建立 TCP 连接（传送 index.html）。',
+   p:{from:'client',to:'server',ch:0,kind:'handshake',label:'SYN #1'},
+   fields:{'类型':'TCP 三次握手 1/3','源端口':'49152（示例）','目的端口':'80','SYN':'1','序号 seq':'x'},
+   states:{client:'发送 SYN #1',server:'收到 SYN #1',led:0},link:{id:0,state:'active'}},
+  {t:'非持久 · 步骤 2/25 · 连接① 握手',d:'服务器回复 SYN+ACK，确认客户端序号并携带自己的初始序号。',
+   p:{from:'server',to:'client',ch:0,kind:'handshake',label:'SYN+ACK #1'},
+   fields:{'类型':'TCP 三次握手 2/3','SYN':'1','ACK':'1','序号 seq':'y','确认号 ack':'x+1'},
+   states:{client:'收到 SYN+ACK #1',server:'发送 SYN+ACK #1',led:0},link:{id:0,state:'active'}},
+  {t:'非持久 · 步骤 3/25 · 连接① 建立',d:'客户端发送 ACK，连接①建立完成。此后才能发送 HTTP 请求。',
+   p:{from:'client',to:'server',ch:0,kind:'handshake',label:'ACK #1'},
+   fields:{'类型':'TCP 三次握手 3/3','ACK':'1','序号 seq':'x+1','确认号 ack':'y+1'},
+   states:{client:'连接①已建立',server:'连接①已建立',led:0},link:{id:0,state:'busy'}},
+  {t:'非持久 · 步骤 4/25 · 请求 index.html',d:'客户端在连接①上发送 HTTP GET 请求，请求行包含方法、URL 与版本。非持久连接使用 Connection: close。',
+   p:{from:'client',to:'server',ch:0,kind:'request',label:'GET index.html'},
+   fields:{'请求行':'GET /index.html HTTP/1.0','Host':'www.example.com','Connection':'close'},
+   states:{client:'发送 GET #1',server:'处理请求中',led:0},link:{id:0,state:'busy'}},
+  {t:'非持久 · 步骤 5/25 · 响应 index.html',d:'服务器返回 200 OK，响应体携带基本 HTML 文件。浏览器解析后将发现其中的 <img> 引用。',
+   p:{from:'server',to:'client',ch:0,kind:'response',label:'200 index.html'},
+   fields:{'状态行':'HTTP/1.0 200 OK','Content-Type':'text/html','Connection':'close','响应体':'<html>…含 2 个 <img> 引用…</html>'},
+   states:{client:'接收 HTML',server:'发送 index.html',led:0},link:{id:0,state:'busy'}},
+  {t:'非持久 · 步骤 6/25 · 关闭连接①',d:'对象传送完毕，客户端发送 FIN 请求关闭连接①（四次挥手 1/3，此处将挥手合并为 3 步 · 简化演示）。',
+   p:{from:'client',to:'server',ch:0,kind:'finish',label:'FIN #1'},
+   fields:{'类型':'TCP 挥手 1/3','FIN':'1','序号 seq':'u'},
+   states:{client:'发送 FIN #1',server:'收到 FIN #1',led:0},link:{id:0,state:'active'}},
+  {t:'非持久 · 步骤 7/25 · 关闭连接①',d:'服务器确认并请求关闭。注意：真实协议中 ACK 与 FIN 可为两个独立报文，此处合并展示（简化演示）。',
+   p:{from:'server',to:'client',ch:0,kind:'finish',label:'ACK+FIN #1'},
+   fields:{'类型':'TCP 挥手 2/3（ACK 与 FIN 合并 · 简化）','ACK':'1','FIN':'1','确认号 ack':'u+1'},
+   states:{client:'收到 ACK+FIN',server:'请求关闭',led:0},link:{id:0,state:'active'}},
+  {t:'非持久 · 步骤 8/25 · 连接①关闭',d:'客户端回复最后一个 ACK，连接①完全关闭。传送这一个对象共花费约 2 个 RTT。',
+   p:{from:'client',to:'server',ch:0,kind:'finish',label:'ACK #1'},
+   fields:{'类型':'TCP 挥手 3/3','ACK':'1','确认号 ack':'v+1'},
+   states:{client:'连接①已关闭',server:'连接①已关闭',led:0},link:{id:0,state:'closed'}},
+
+  {t:'非持久 · 步骤 9/25 · 连接② 握手',d:'浏览器解析到第 1 个 <img>，必须为它重新建立一条新的 TCP 连接②。',
+   p:{from:'client',to:'server',ch:1,kind:'handshake',label:'SYN #2'},
+   fields:{'类型':'TCP 三次握手 1/3','源端口':'49153（示例）','目的端口':'80','SYN':'1'},
+   states:{client:'发送 SYN #2',server:'收到 SYN #2',led:1},link:{id:1,state:'active'}},
+  {t:'非持久 · 步骤 10/25 · 连接② 握手',d:'服务器对连接②回复 SYN+ACK。',
+   p:{from:'server',to:'client',ch:1,kind:'handshake',label:'SYN+ACK #2'},
+   fields:{'类型':'TCP 三次握手 2/3','SYN':'1','ACK':'1'},
+   states:{client:'收到 SYN+ACK #2',server:'发送 SYN+ACK #2',led:1},link:{id:1,state:'active'}},
+  {t:'非持久 · 步骤 11/25 · 连接② 建立',d:'客户端发送 ACK，连接②建立完成。',
+   p:{from:'client',to:'server',ch:1,kind:'handshake',label:'ACK #2'},
+   fields:{'类型':'TCP 三次握手 3/3','ACK':'1'},
+   states:{client:'连接②已建立',server:'连接②已建立',led:1},link:{id:1,state:'busy'}},
+  {t:'非持久 · 步骤 12/25 · 请求 img1.gif',d:'客户端在连接②上发送对第 1 张图片的 GET 请求。',
+   p:{from:'client',to:'server',ch:1,kind:'request',label:'GET img1.gif'},
+   fields:{'请求行':'GET /img1.gif HTTP/1.0','Host':'www.example.com','Connection':'close'},
+   states:{client:'发送 GET #2',server:'处理请求中',led:1},link:{id:1,state:'busy'}},
+  {t:'非持久 · 步骤 13/25 · 响应 img1.gif',d:'服务器返回第 1 张图片。',
+   p:{from:'server',to:'client',ch:1,kind:'response',label:'200 img1.gif'},
+   fields:{'状态行':'HTTP/1.0 200 OK','Content-Type':'image/gif','Connection':'close'},
+   states:{client:'接收 img1',server:'发送 img1.gif',led:1},link:{id:1,state:'busy'}},
+  {t:'非持久 · 步骤 14/25 · 关闭连接②',d:'客户端发送 FIN 关闭连接②。',
+   p:{from:'client',to:'server',ch:1,kind:'finish',label:'FIN #2'},
+   fields:{'类型':'TCP 挥手 1/3','FIN':'1'},
+   states:{client:'发送 FIN #2',server:'收到 FIN #2',led:1},link:{id:1,state:'active'}},
+  {t:'非持久 · 步骤 15/25 · 关闭连接②',d:'服务器 ACK+FIN（合并 · 简化演示）。',
+   p:{from:'server',to:'client',ch:1,kind:'finish',label:'ACK+FIN #2'},
+   fields:{'类型':'TCP 挥手 2/3（合并 · 简化）','ACK':'1','FIN':'1'},
+   states:{client:'收到 ACK+FIN',server:'请求关闭',led:1},link:{id:1,state:'active'}},
+  {t:'非持久 · 步骤 16/25 · 连接②关闭',d:'连接②关闭。已为 2 个对象各花费约 2 RTT。',
+   p:{from:'client',to:'server',ch:1,kind:'finish',label:'ACK #2'},
+   fields:{'类型':'TCP 挥手 3/3','ACK':'1'},
+   states:{client:'连接②已关闭',server:'连接②已关闭',led:1},link:{id:1,state:'closed'}},
+
+  {t:'非持久 · 步骤 17/25 · 连接③ 握手',d:'为第 2 张图片建立连接③——第三次完整握手。',
+   p:{from:'client',to:'server',ch:2,kind:'handshake',label:'SYN #3'},
+   fields:{'类型':'TCP 三次握手 1/3','源端口':'49154（示例）','目的端口':'80','SYN':'1'},
+   states:{client:'发送 SYN #3',server:'收到 SYN #3',led:2},link:{id:2,state:'active'}},
+  {t:'非持久 · 步骤 18/25 · 连接③ 握手',d:'服务器对连接③回复 SYN+ACK。',
+   p:{from:'server',to:'client',ch:2,kind:'handshake',label:'SYN+ACK #3'},
+   fields:{'类型':'TCP 三次握手 2/3','SYN':'1','ACK':'1'},
+   states:{client:'收到 SYN+ACK #3',server:'发送 SYN+ACK #3',led:2},link:{id:2,state:'active'}},
+  {t:'非持久 · 步骤 19/25 · 连接③ 建立',d:'连接③建立完成。',
+   p:{from:'client',to:'server',ch:2,kind:'handshake',label:'ACK #3'},
+   fields:{'类型':'TCP 三次握手 3/3','ACK':'1'},
+   states:{client:'连接③已建立',server:'连接③已建立',led:2},link:{id:2,state:'busy'}},
+  {t:'非持久 · 步骤 20/25 · 请求 img2.gif',d:'在连接③上请求第 2 张图片。',
+   p:{from:'client',to:'server',ch:2,kind:'request',label:'GET img2.gif'},
+   fields:{'请求行':'GET /img2.gif HTTP/1.0','Host':'www.example.com','Connection':'close'},
+   states:{client:'发送 GET #3',server:'处理请求中',led:2},link:{id:2,state:'busy'}},
+  {t:'非持久 · 步骤 21/25 · 响应 img2.gif',d:'服务器返回第 2 张图片。',
+   p:{from:'server',to:'client',ch:2,kind:'response',label:'200 img2.gif'},
+   fields:{'状态行':'HTTP/1.0 200 OK','Content-Type':'image/gif','Connection':'close'},
+   states:{client:'接收 img2',server:'发送 img2.gif',led:2},link:{id:2,state:'busy'}},
+  {t:'非持久 · 步骤 22/25 · 关闭连接③',d:'客户端发送 FIN 关闭连接③。',
+   p:{from:'client',to:'server',ch:2,kind:'finish',label:'FIN #3'},
+   fields:{'类型':'TCP 挥手 1/3','FIN':'1'},
+   states:{client:'发送 FIN #3',server:'收到 FIN #3',led:2},link:{id:2,state:'active'}},
+  {t:'非持久 · 步骤 23/25 · 关闭连接③',d:'服务器 ACK+FIN（合并 · 简化演示）。',
+   p:{from:'server',to:'client',ch:2,kind:'finish',label:'ACK+FIN #3'},
+   fields:{'类型':'TCP 挥手 2/3（合并 · 简化）','ACK':'1','FIN':'1'},
+   states:{client:'收到 ACK+FIN',server:'请求关闭',led:2},link:{id:2,state:'active'}},
+  {t:'非持久 · 步骤 24/25 · 连接③关闭',d:'连接③关闭。非持久方式共建立并关闭了 3 条连接、24 个报文。',
+   p:{from:'client',to:'server',ch:2,kind:'finish',label:'ACK #3'},
+   fields:{'类型':'TCP 挥手 3/3','ACK':'1'},
+   states:{client:'连接③已关闭',server:'连接③已关闭',led:2},link:{id:2,state:'closed'}},
+  {t:'非持久 · 步骤 25/25 · 完成',d:'页面渲染完成。对比持久连接：它早已完成。非持久开销 ≈ 2 RTT/对象。',
+   p:null,fields:null,states:{client:'✅ 页面加载完成',server:'空闲',led:-1},link:null,done:true}
+];
+
+/* ============================================================
+   步骤数组：持久连接（一次握手，复用连接）
+   ============================================================ */
+const STEPS_PERSISTENT = [
+  {t:'持久 · 步骤 1/13 · 握手',d:'客户端发送 SYN，建立唯一的一条 TCP 连接——之后所有对象都将复用它。',
+   p:{from:'client',to:'server',ch:0,kind:'handshake',label:'SYN'},
+   fields:{'类型':'TCP 三次握手 1/3','源端口':'49200（示例）','目的端口':'80','SYN':'1','序号 seq':'x'},
+   states:{client:'发送 SYN',server:'收到 SYN',led:0},link:{id:0,state:'active'}},
+  {t:'持久 · 步骤 2/13 · 握手',d:'服务器回复 SYN+ACK。',
+   p:{from:'server',to:'client',ch:0,kind:'handshake',label:'SYN+ACK'},
+   fields:{'类型':'TCP 三次握手 2/3','SYN':'1','ACK':'1','序号 seq':'y','确认号 ack':'x+1'},
+   states:{client:'收到 SYN+ACK',server:'发送 SYN+ACK',led:0},link:{id:0,state:'active'}},
+  {t:'持久 · 步骤 3/13 · 连接建立',d:'客户端发送 ACK，连接建立。注意：这条连接之后将一直保持，不会为每个对象重建。',
+   p:{from:'client',to:'server',ch:0,kind:'handshake',label:'ACK'},
+   fields:{'类型':'TCP 三次握手 3/3','ACK':'1','序号 seq':'x+1','确认号 ack':'y+1'},
+   states:{client:'连接已建立',server:'连接已建立',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 4/13 · 请求 index.html',d:'在同一条连接上发送 GET 请求。HTTP/1.1 默认 Connection: keep-alive（连接保持）。',
+   p:{from:'client',to:'server',ch:0,kind:'request',label:'GET index.html'},
+   fields:{'请求行':'GET /index.html HTTP/1.1','Host':'www.example.com','Connection':'keep-alive'},
+   states:{client:'发送 GET #1',server:'处理请求中',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 5/13 · 响应 index.html',d:'服务器返回基本 HTML。关键区别：响应后连接不关闭，继续保留。',
+   p:{from:'server',to:'client',ch:0,kind:'response',label:'200 index.html'},
+   fields:{'状态行':'HTTP/1.1 200 OK','Content-Type':'text/html','Connection':'keep-alive','响应体':'<html>…含 2 个 <img> 引用…</html>'},
+   states:{client:'接收 HTML（连接保持）',server:'发送 index.html（连接保持）',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 6/13 · 复用请求 img1',d:'浏览器解析出第 1 个 <img>，无需重新握手，直接在现有连接上发送请求——省去 1 个 RTT 的握手开销。',
+   p:{from:'client',to:'server',ch:0,kind:'request',label:'GET img1.gif'},
+   fields:{'请求行':'GET /img1.gif HTTP/1.1','Host':'www.example.com','Connection':'keep-alive','说明':'复用已建立的连接，无握手开销'},
+   states:{client:'发送 GET #2（复用）',server:'处理请求中',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 7/13 · 响应 img1',d:'服务器在同一连接上返回第 1 张图片。',
+   p:{from:'server',to:'client',ch:0,kind:'response',label:'200 img1.gif'},
+   fields:{'状态行':'HTTP/1.1 200 OK','Content-Type':'image/gif','Connection':'keep-alive'},
+   states:{client:'接收 img1（连接保持）',server:'发送 img1.gif（连接保持）',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 8/13 · 复用请求 img2',d:'继续复用，请求第 2 张图片。',
+   p:{from:'client',to:'server',ch:0,kind:'request',label:'GET img2.gif'},
+   fields:{'请求行':'GET /img2.gif HTTP/1.1','Host':'www.example.com','Connection':'keep-alive','说明':'复用已建立的连接，无握手开销'},
+   states:{client:'发送 GET #3（复用）',server:'处理请求中',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 9/13 · 响应 img2',d:'服务器返回第 2 张图片。全部对象传送完毕，且全程只用一条连接。',
+   p:{from:'server',to:'client',ch:0,kind:'response',label:'200 img2.gif'},
+   fields:{'状态行':'HTTP/1.1 200 OK','Content-Type':'image/gif','Connection':'keep-alive'},
+   states:{client:'接收 img2（连接保持）',server:'发送 img2.gif（连接保持）',led:0},link:{id:0,state:'busy'}},
+  {t:'持久 · 步骤 10/13 · 关闭连接',d:'客户端确认无需再请求后主动关闭（或服务器空闲超时后关闭）。一次握手服务了全部对象。',
+   p:{from:'client',to:'server',ch:0,kind:'finish',label:'FIN'},
+   fields:{'类型':'TCP 挥手 1/3','FIN':'1','说明':'所有对象传送完毕后才关闭'},
+   states:{client:'发送 FIN',server:'收到 FIN',led:0},link:{id:0,state:'active'}},
+  {t:'持久 · 步骤 11/13 · 关闭连接',d:'服务器 ACK+FIN（合并 · 简化演示）。',
+   p:{from:'server',to:'client',ch:0,kind:'finish',label:'ACK+FIN'},
+   fields:{'类型':'TCP 挥手 2/3（合并 · 简化）','ACK':'1','FIN':'1'},
+   states:{client:'收到 ACK+FIN',server:'请求关闭',led:0},link:{id:0,state:'active'}},
+  {t:'持久 · 步骤 12/13 · 连接关闭',d:'客户端回复最后的 ACK，连接关闭。全程仅 1 条连接、12 个报文。',
+   p:{from:'client',to:'server',ch:0,kind:'finish',label:'ACK'},
+   fields:{'类型':'TCP 挥手 3/3','ACK':'1'},
+   states:{client:'连接已关闭',server:'连接已关闭',led:0},link:{id:0,state:'closed'}},
+  {t:'持久 · 步骤 13/13 · 完成',d:'页面渲染完成。对比：持久连接报文更少、完成更快（约 4 RTT，非持久约 6 RTT）。',
+   p:null,fields:null,states:{client:'✅ 页面加载完成',server:'空闲',led:-1},link:null,done:true}
+];
+
+/* ============================================================ DOM 缓存 ============================================================ */
+const $ = s => document.querySelector(s);
+const el = {
+  btnPlay:$('#btnPlay'),btnPause:$('#btnPause'),btnStep:$('#btnStep'),btnReset:$('#btnReset'),
+  speed:$('#speed'),speedVal:$('#speedVal'),
+  npScene:$('#npScene'),psScene:$('#psScene'),
+  npBar:$('#npBar'),psBar:$('#psBar'),npStatus:$('#npStatus'),psStatus:$('#psStatus'),
+  detailBody:$('#detailBody'),logList:$('#logList')
+};
+/* —— 拆分后的两个步骤说明区块引用 —— */
+const stepDisplay = {
+  np:{ block:$('#sbNp'), counter:$('#npStepCounter'), title:$('#npStepTitle'), desc:$('#npStepDesc') },
+  ps:{ block:$('#sbPs'), counter:$('#psStepCounter'), title:$('#psStepTitle'), desc:$('#psStepDesc') }
+};
+
+/* ============================================================ 动画引擎状态 ============================================================ */
+const engine = {
+  playing:false, speed:1, rafId:null, lastTs:0,
+  npIndex:0, psIndex:0,
+  npDone:false, psDone:false,
+  packets:[],
+  npPending:0, psPending:0,
+  pauseAfterStep:false
+};
+
+/* ============================================================ 工具函数 ============================================================ */
+function sceneOf(lane){ return lane==='np' ? el.npScene : el.psScene; }
+function stepsOf(lane){ return lane==='np' ? STEPS_NON_PERSISTENT : STEPS_PERSISTENT; }
+function updateLaneProgress(){
+  el.npBar.style.width = (engine.npIndex/STEPS_NON_PERSISTENT.length*100)+'%';
+  el.psBar.style.width = (engine.psIndex/STEPS_PERSISTENT.length*100)+'%';
+  el.npStatus.textContent = engine.npDone ? '✅ 完成（'+STEPS_NON_PERSISTENT.length+' 步）' : '步骤 '+(engine.npIndex)+' / '+STEPS_NON_PERSISTENT.length;
+  el.psStatus.textContent = engine.psDone ? '✅ 完成（'+STEPS_PERSISTENT.length+' 步）' : '步骤 '+(engine.psIndex)+' / '+STEPS_PERSISTENT.length;
+}
+
+/* ============================================================ 节点状态与链路样式 ============================================================ */
+function applyStepVisuals(lane, step){
+  const prefix = lane;
+  if(step.states){
+    const cs = $('#'+prefix+'ClientStatus'), ss = $('#'+prefix+'ServerStatus');
+    if(step.states.client){ cs.textContent = step.states.client; }
+    if(step.states.server){ ss.textContent = step.states.server; }
+    if(step.states.led>=0){
+      const led = $('#'+prefix+'Led'+step.states.led);
+      if(led) led.classList.add('on');
+    }
+    if(step.states.led===-1){
+      document.querySelectorAll('[id^='+prefix+'Led]').forEach(l=>l.classList.add('on'));
+    }
+  }
+  if(step.link){
+    const link = $('#'+prefix+'Link'+step.link.id);
+    link.classList.remove('active','busy','closed');
+    link.classList.add(step.link.state);
+  }
+  const icon = sceneOf(lane).querySelector('.node.client .icon');
+  if(step.p && step.p.from==='client' && icon){ icon.classList.remove('pulse'); void icon.offsetWidth; icon.classList.add('pulse'); }
+}
+
+/* ============================================================ 数据包生成与动画 ============================================================ */
+function spawnPacket(lane, pkt, step){
+  const scene = sceneOf(lane);
+  const node = document.createElement('div');
+  node.className = 'packet '+KIND_CLASS[pkt.kind];
+  node.textContent = pkt.label;
+  const startX = pkt.from==='client' ? CONFIG.clientX : CONFIG.serverX;
+  const endX   = pkt.from==='client' ? CONFIG.serverX : CONFIG.clientX;
+  const y = LANE_Y[lane][pkt.ch];
+  node.style.top = y+'px'; node.style.left = startX+'%';
+  scene.appendChild(node);
+  const rec = { el:node, lane, pkt, step, startX, endX, progress:0, arrived:false };
+  node.addEventListener('click', ()=>showPacketDetail(rec));
+  engine.packets.push(rec);
+  if(lane==='np') engine.npPending++; else engine.psPending++;
+}
+
+function movePackets(dt){
+  const speedFactor = engine.speed;
+  for(let i=engine.packets.length-1;i>=0;i--){
+    const r = engine.packets[i];
+    if(!r.arrived){
+      r.progress += (dt*speedFactor)/CONFIG.travelTime;
+      if(r.progress>=1){
+        r.progress=1; r.arrived=true;
+        r.el.style.left = r.endX+'%';
+        r.el.classList.add('arrived');
+        if(r.lane==='np') engine.npPending--; else engine.psPending--;
+        setTimeout(()=>{ r.el.classList.add('fade'); setTimeout(()=>r.el.remove(),450); }, CONFIG.holdTime);
+        engine.packets.splice(i,1);
+      } else {
+        const x = r.startX + (r.endX-r.startX)*r.progress;
+        r.el.style.left = x+'%';
+      }
+    }
+  }
+}
+
+/* ============================================================ 事件日志 ============================================================ */
+function addLog(lane, step, pkt){
+  const item = document.createElement('div');
+  item.className='log-item';
+  const laneTag = lane==='np'?'非持久':'持久';
+  item.innerHTML = '<span class="dot" style="background:'+KIND_COLOR[pkt.kind]+'"></span>'
+    +'<span class="lane-tag">'+laneTag+'</span><span>'+pkt.label+'（'+step.t.split('·')[1].trim()+'）</span>';
+  item.addEventListener('click',()=>showPacketDetail({lane,pkt,step,el:null}));
+  el.logList.appendChild(item);
+  el.logList.scrollTop = el.logList.scrollHeight;
+}
+
+/* ============================================================ 信息面板 ============================================================ */
+function showPacketDetail(rec){
+  const laneName = rec.lane==='np'?'非持久连接':'持久连接';
+  let html = '<div class="detail-src">来源：'+laneName+' · '+rec.step.t+'</div><table class="kv">';
+  html += '<tr><td>报文标签</td><td>'+rec.pkt.label+'</td></tr>';
+  html += '<tr><td>方向</td><td>'+(rec.pkt.from==='client'?'客户端 → 服务器':'服务器 → 客户端')+'</td></tr>';
+  const f = rec.step.fields||{};
+  for(const k in f){ html += '<tr><td>'+k+'</td><td>'+f[k]+'</td></tr>'; }
+  html += '</table>';
+  el.detailBody.innerHTML = html;
+}
+function showNodeDetail(nodeId){
+  const info = {
+    'client-np':{name:'客户端（浏览器）· 非持久',rows:{'角色':'HTTP 客户','传输层':'TCP','连接模式':'每对象独立连接','当前状态':$('#npClientStatus').textContent}},
+    'server-np':{name:'Web 服务器 :80 · 非持久',rows:{'角色':'HTTP 服务器','监听端口':'80','连接模式':'被动接受连接','当前状态':$('#npServerStatus').textContent}},
+    'client-ps':{name:'客户端（浏览器）· 持久',rows:{'角色':'HTTP 客户','传输层':'TCP','连接模式':'单连接复用','当前状态':$('#psClientStatus').textContent}},
+    'server-ps':{name:'Web 服务器 :80 · 持久',rows:{'角色':'HTTP 服务器','监听端口':'80','连接模式':'保持连接','当前状态':$('#psServerStatus').textContent}}
+  };
+  const d = info[nodeId]; if(!d) return;
+  let html = '<div class="detail-src">'+d.name+'</div><table class="kv">';
+  for(const k in d.rows){ html += '<tr><td>'+k+'</td><td>'+d.rows[k]+'</td></tr>'; }
+  html += '</table>';
+  el.detailBody.innerHTML = html;
+}
+
+/* ============================================================ 步骤执行（分别更新各自说明区块） ============================================================ */
+function executeStep(lane){
+  const steps = stepsOf(lane);
+  const idx = lane==='np'?engine.npIndex:engine.psIndex;
+  if(idx>=steps.length) return;
+  const step = steps[idx];
+  applyStepVisuals(lane, step);
+  // —— 只更新本泳道对应的说明区块 ——
+  const disp = stepDisplay[lane];
+  disp.counter.textContent = step.t;
+  disp.title.textContent = step.d.split('。')[0]+'。';
+  disp.desc.textContent = step.d;
+  disp.block.classList.add('recent');
+  if(step.p){
+    spawnPacket(lane, step.p, step);
+    addLog(lane, step, step.p);
+  } else {
+    if(lane==='np') engine.npPending--; else engine.psPending--;
+  }
+  if(step.done){ if(lane==='np') engine.npDone=true; else engine.psDone=true; }
+  if(lane==='np') engine.npIndex++; else engine.psIndex++;
+  updateLaneProgress();
+}
+
+function advanceBoth(){
+  // 先清除高亮，再分别执行两条泳道的当前步骤
+  stepDisplay.np.block.classList.remove('recent');
+  stepDisplay.ps.block.classList.remove('recent');
+  if(!engine.npDone) executeStep('np');
+  if(!engine.psDone) executeStep('ps');
+}
+
+/* ============================================================ 主循环 ============================================================ */
+function tick(ts){
+  if(!engine.playing) return;
+  const dt = engine.lastTs ? (ts-engine.lastTs) : 0;
+  engine.lastTs = ts;
+  movePackets(dt);
+  const allArrived = engine.npPending<=0 && engine.psPending<=0;
+  const allDone = engine.npDone && engine.psDone;
+  if(allArrived){
+    if(allDone){ stopPlaying('finished'); return; }
+    if(engine.pauseAfterStep){ engine.pauseAfterStep=false; stopPlaying('step'); return; }
+    advanceBoth();
+  }
+  engine.rafId = requestAnimationFrame(tick);
+}
+
+function startPlaying(){
+  if(engine.npDone && engine.psDone) return;
+  engine.playing=true; engine.lastTs=0;
+  el.btnPlay.disabled=true; el.btnPause.disabled=false;
+  engine.rafId = requestAnimationFrame(tick);
+}
+function stopPlaying(reason){
+  engine.playing=false;
+  if(engine.rafId) cancelAnimationFrame(engine.rafId);
+  engine.rafId=null;
+  el.btnPlay.disabled = reason==='finished';
+  el.btnPause.disabled = true;
+  if(reason==='finished'){
+    // 两个区块分别显示完成与对比结论
+    stepDisplay.np.title.textContent='✅ 演示完成';
+    stepDisplay.ps.title.textContent='✅ 演示完成';
+    stepDisplay.np.desc.textContent='非持久连接 '+STEPS_NON_PERSISTENT.length+' 步、24 个报文、约 6 RTT（每对象独立握手+挥手）。';
+    stepDisplay.ps.desc.textContent='持久连接仅 '+STEPS_PERSISTENT.length+' 步、12 个报文、约 4 RTT（一次握手复用），显著更快。';
+  }
+}
+
+/* ============================================================ 控制按钮 ============================================================ */
+el.btnPlay.addEventListener('click', startPlaying);
+el.btnPause.addEventListener('click', ()=>stopPlaying('pause'));
+el.btnStep.addEventListener('click', ()=>{
+  if(engine.playing) stopPlaying('pause');
+  if(engine.npDone && engine.psDone) return;
+  engine.pauseAfterStep = true;
+  engine.playing=true; engine.lastTs=0;
+  advanceBoth();
+  engine.rafId = requestAnimationFrame(tick);
+});
+el.btnReset.addEventListener('click', resetAll);
+el.speed.addEventListener('input', ()=>{
+  engine.speed = parseFloat(el.speed.value);
+  el.speedVal.textContent = parseFloat(engine.speed.toFixed(2))+'×';
+});
+
+function resetAll(){
+  stopPlaying('reset');
+  engine.npIndex=0; engine.psIndex=0; engine.npDone=false; engine.psDone=false;
+  engine.npPending=0; engine.psPending=0; engine.packets=[]; engine.pauseAfterStep=false;
+  document.querySelectorAll('.packet').forEach(p=>p.remove());
+  el.logList.innerHTML='';
+  ['np','ps'].forEach(lane=>{
+    $('#'+lane+'ClientStatus').textContent='空闲';
+    $('#'+lane+'ServerStatus').textContent='空闲';
+    document.querySelectorAll('[id^='+lane+'Led]').forEach(l=>l.classList.remove('on'));
+    document.querySelectorAll('[id^='+lane+'Link]').forEach(l=>l.classList.remove('active','busy','closed'));
+    // 重置各自的步骤说明区块
+    const disp = stepDisplay[lane];
+    disp.block.classList.remove('recent');
+    disp.counter.textContent='尚未开始';
+    disp.title.textContent='等待开始';
+  });
+  stepDisplay.np.desc.textContent='共 '+STEPS_NON_PERSISTENT.length+' 步：每个对象独立握手与挥手。';
+  stepDisplay.ps.desc.textContent='共 '+STEPS_PERSISTENT.length+' 步：一次握手，复用连接。';
+  updateLaneProgress();
+  el.detailBody.innerHTML='<div class="detail-empty">点击客户端 / 服务器节点，或点击移动中的数据包、事件日志条目，此处将显示详细信息。</div>';
+  el.btnPlay.disabled=false;
+}
+
+/* ============================================================ 节点点击 ============================================================ */
+document.querySelectorAll('.node').forEach(n=>{
+  n.addEventListener('click', ()=>showNodeDetail(n.dataset.node));
+});
+
+/* ============================================================ 初始化 ============================================================ */
+updateLaneProgress();
+})();
+</script>
+</body>
+</html>
