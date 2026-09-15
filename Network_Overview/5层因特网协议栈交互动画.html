@@ -4,1064 +4,1410 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>5层因特网协议栈交互动画</title>
+
 <!--
-  教学简化说明：
-  1. 本动画基于《计算机网络：自顶向下方法（第8版）》中的5层因特网协议栈。
-  2. 演示 HTTP over TCP over IPv4 over Ethernet 的单向数据传输。
-  3. 为突出五层功能，省略 TCP 三次握手、确认、重传、ARP、ICMP、校验和计算、物理编码等细节。
-  4. 假设交换机 MAC 地址表、路由器路由表已经建立。
+教学简化说明：
+1. 本动画基于《计算机网络：自顶向下方法（第8版）》中的5层因特网协议栈。
+2. 演示 HTTP over TCP over IPv4 over Ethernet 的单向数据传输。
+3. 为突出五层功能，省略 TCP 三次握手、确认、重传、ARP、ICMP、校验和计算、物理编码等细节。
+4. 假设交换机 MAC 地址表、路由器路由表已经建立。
 -->
+
+<!--
+主题初始化脚本：
+在页面渲染前尽早设置主题，减少深色 / 浅色主题闪烁。
+-->
+<script>
+(function () {
+  try {
+    var stored = localStorage.getItem("five-layer-theme");
+    var theme =
+      stored === "dark" || stored === "light"
+        ? stored
+        : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+  } catch (error) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
+
 <style>
-  :root {
-    --bg: #f3f6fb;
-    --panel: #ffffff;
-    --border: #d7e0ea;
-    --text: #182430;
-    --muted: #5b6b7b;
-    --primary: #2563eb;
-    --app: #e74c3c;
-    --transport: #f39c12;
-    --network: #3498db;
-    --link: #2ecc71;
-    --physical: #9b59b6;
-  }
+:root {
+  color-scheme: light;
 
-  * {
-    box-sizing: border-box;
-  }
+  --bg: #f3f6fb;
+  --panel: #ffffff;
+  --border: #d7e0ea;
+  --text: #182430;
+  --muted: #5b6b7b;
+  --primary: #2563eb;
 
-  body {
-    margin: 0;
-    padding: 16px;
-    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-  }
+  --app: #e74c3c;
+  --transport: #f39c12;
+  --network: #3498db;
+  --link: #2ecc71;
+  --physical: #9b59b6;
 
-  h1, h2, h3 {
-    margin: 0 0 8px;
-  }
+  --scene-top: #ffffff;
+  --scene-bottom: #f8fbff;
+  --device-fill: #ffffff;
+  --device-stroke: #93a7bd;
+  --wire: #7b8ea3;
 
-  h1 {
-    font-size: 24px;
-  }
+  --note-bg: #fffbe8;
+  --note-border: #eadf9b;
+  --note-text: #5b4f1a;
 
-  .subtitle {
-    color: var(--muted);
-    margin-bottom: 14px;
-    line-height: 1.6;
-  }
+  --step-list-bg: #fbfdff;
+  --hover-bg: #eef5ff;
+  --active-bg: #dbeafe;
+  --active-text: #1d4ed8;
 
-  .controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px;
-    margin-bottom: 14px;
-  }
+  --button-bg: #ffffff;
+  --kbd-bg: #ffffff;
+}
 
-  .controls button {
-    border: 1px solid var(--border);
-    background: #fff;
-    color: var(--text);
-    border-radius: 8px;
-    padding: 9px 14px;
-    cursor: pointer;
-    font-size: 14px;
-  }
+html[data-theme="dark"] {
+  color-scheme: dark;
 
-  .controls button:hover {
-    border-color: var(--primary);
-    color: var(--primary);
-  }
+  --bg: #0f172a;
+  --panel: #111827;
+  --border: #334155;
+  --text: #e5eef8;
+  --muted: #9fb0c3;
+  --primary: #60a5fa;
 
-  .controls .speed {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
-    color: var(--muted);
-    font-size: 14px;
-  }
+  --scene-top: #0f172a;
+  --scene-bottom: #111827;
+  --device-fill: #111827;
+  --device-stroke: #64748b;
+  --wire: #64748b;
 
-  .controls input[type="range"] {
-    width: 160px;
-  }
+  --note-bg: #272009;
+  --note-border: #8a6d1f;
+  --note-text: #f3e2a8;
 
+  --step-list-bg: #0b1220;
+  --hover-bg: #1d293b;
+  --active-bg: #1e3a8a;
+  --active-text: #bfdbfe;
+
+  --button-bg: #1f2937;
+  --kbd-bg: #1f2937;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 8px;
+}
+
+h1 {
+  font-size: 24px;
+  padding-right: 130px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-bottom: 14px;
+  line-height: 1.6;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  border: 1px solid var(--border);
+  background: var(--button-bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.theme-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.controls button {
+  border: 1px solid var(--border);
+  background: var(--button-bg);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.controls button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.controls .speed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.controls input[type="range"] {
+  width: 160px;
+  accent-color: var(--primary);
+}
+
+.shortcut-hint {
+  width: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+kbd {
+  border: 1px solid var(--border);
+  background: var(--kbd-bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(680px, 1fr) 370px;
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
   .layout {
-    display: grid;
-    grid-template-columns: minmax(680px, 1fr) 370px;
-    gap: 14px;
+    grid-template-columns: 1fr;
   }
+}
 
-  @media (max-width: 1100px) {
-    .layout {
-      grid-template-columns: 1fr;
-    }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.scene-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: linear-gradient(180deg, var(--scene-top) 0%, var(--scene-bottom) 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  user-select: none;
+}
+
+.note {
+  font-size: 13px;
+  color: var(--note-text);
+  line-height: 1.7;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.step-meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 0 10px;
+}
+
+.step-desc {
+  line-height: 1.7;
+  min-height: 74px;
+}
+
+.step-list-wrap {
+  max-height: 230px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--step-list-bg);
+}
+
+#stepList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#stepList li {
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#stepList li:hover {
+  background: var(--hover-bg);
+}
+
+#stepList li.active {
+  background: var(--active-bg);
+  color: var(--active-text);
+  font-weight: 700;
+}
+
+.info-content {
+  line-height: 1.75;
+  font-size: 14px;
+}
+
+.info-content h3 {
+  font-size: 16px;
+}
+
+.info-content dl {
+  margin: 8px 0 0;
+}
+
+.info-content dt {
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.info-content dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+.legend-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex: 0 0 18px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.app {
+  background: var(--app);
+}
+
+.transport {
+  background: var(--transport);
+}
+
+.network {
+  background: var(--network);
+}
+
+.link {
+  background: var(--link);
+}
+
+.physical {
+  background: var(--physical);
+}
+
+.device-box {
+  fill: var(--device-fill);
+  stroke: var(--device-stroke);
+  stroke-width: 2;
+}
+
+.device {
+  cursor: pointer;
+}
+
+.device:hover .device-box {
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+
+.device-title {
+  font-size: 16px;
+  font-weight: 700;
+  text-anchor: middle;
+  fill: var(--text);
+}
+
+.layer {
+  fill-opacity: 0.16;
+  stroke-width: 2;
+}
+
+.layer-text {
+  font-size: 14px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  fill: var(--text);
+  pointer-events: none;
+}
+
+.app-layer {
+  fill: var(--app);
+  stroke: var(--app);
+}
+
+.transport-layer {
+  fill: var(--transport);
+  stroke: var(--transport);
+}
+
+.network-layer {
+  fill: var(--network);
+  stroke: var(--network);
+}
+
+.link-layer {
+  fill: var(--link);
+  stroke: var(--link);
+}
+
+.physical-layer {
+  fill: var(--physical);
+  stroke: var(--physical);
+}
+
+.layer-indicator.active .layer {
+  fill-opacity: 0.48;
+  stroke-width: 5;
+  animation: layerPulse 1.15s ease-in-out infinite;
+}
+
+@keyframes layerPulse {
+  0%,
+  100% {
+    fill-opacity: 0.36;
   }
-
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px;
+  50% {
+    fill-opacity: 0.62;
   }
+}
 
-  .scene-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+.wire {
+  stroke: var(--wire);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
 
-  svg {
-    width: 100%;
-    height: auto;
-    display: block;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    user-select: none;
-  }
+.wire-label {
+  font-size: 12px;
+  fill: var(--muted);
+  text-anchor: middle;
+}
 
-  .note {
-    font-size: 13px;
-    color: var(--muted);
-    line-height: 1.7;
-    background: #fffbe8;
-    border: 1px solid #eadf9b;
-    border-radius: 10px;
-    padding: 10px 12px;
-  }
+#packet {
+  cursor: pointer;
+}
 
-  .side {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
+#packet rect {
+  stroke: rgba(20, 30, 40, 0.4);
+  stroke-width: 2;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.18));
+}
 
-  .step-meta {
-    color: var(--muted);
-    font-size: 13px;
-    margin: 6px 0 10px;
-  }
-
-  .step-desc {
-    line-height: 1.7;
-    min-height: 74px;
-  }
-
-  .step-list-wrap {
-    max-height: 230px;
-    overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 8px;
-    background: #fbfdff;
-  }
-
-  #stepList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  #stepList li {
-    padding: 7px 8px;
-    border-radius: 8px;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.45;
-  }
-
-  #stepList li:hover {
-    background: #eef5ff;
-  }
-
-  #stepList li.active {
-    background: #dbeafe;
-    color: #1d4ed8;
-    font-weight: 700;
-  }
-
-  .info-content {
-    line-height: 1.75;
-    font-size: 14px;
-  }
-
-  .info-content h3 {
-    font-size: 16px;
-  }
-
-  .info-content dl {
-    margin: 8px 0 0;
-  }
-
-  .info-content dt {
-    font-weight: 700;
-    margin-top: 8px;
-  }
-
-  .info-content dd {
-    margin: 2px 0 0;
-    color: var(--muted);
-  }
-
-  .legend-grid {
-    display: grid;
-    gap: 8px;
-  }
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    line-height: 1.4;
-  }
-
-  .swatch {
-    width: 18px;
-    height: 18px;
-    border-radius: 5px;
-    flex: 0 0 18px;
-    border: 1px solid rgba(0,0,0,0.18);
-  }
-
-  .app { background: var(--app); }
-  .transport { background: var(--transport); }
-  .network { background: var(--network); }
-  .link { background: var(--link); }
-  .physical { background: var(--physical); }
-
-  .device-box {
-    fill: #ffffff;
-    stroke: #93a7bd;
-    stroke-width: 2;
-  }
-
-  .device {
-    cursor: pointer;
-  }
-
-  .device:hover .device-box {
-    stroke: #2563eb;
-    stroke-width: 3;
-  }
-
-  .device-title {
-    font-size: 16px;
-    font-weight: 700;
-    text-anchor: middle;
-    fill: #182430;
-  }
-
-  .layer {
-    fill-opacity: 0.16;
-    stroke-width: 2;
-  }
-
-  .layer-text {
-    font-size: 14px;
-    text-anchor: middle;
-    dominant-baseline: middle;
-    fill: #182430;
-    pointer-events: none;
-  }
-
-  .app-layer { fill: var(--app); stroke: var(--app); }
-  .transport-layer { fill: var(--transport); stroke: var(--transport); }
-  .network-layer { fill: var(--network); stroke: var(--network); }
-  .link-layer { fill: var(--link); stroke: var(--link); }
-  .physical-layer { fill: var(--physical); stroke: var(--physical); }
-
-  .layer-indicator.active .layer {
-    fill-opacity: 0.48;
-    stroke-width: 5;
-    animation: layerPulse 1.15s ease-in-out infinite;
-  }
-
-  @keyframes layerPulse {
-    0%, 100% { fill-opacity: 0.36; }
-    50% { fill-opacity: 0.62; }
-  }
-
-  .wire {
-    stroke: #7b8ea3;
-    stroke-width: 5;
-    stroke-linecap: round;
-  }
-
-  .wire-label {
-    font-size: 12px;
-    fill: #5b6b7b;
-    text-anchor: middle;
-  }
-
-  #packet {
-    cursor: pointer;
-  }
-
-  #packet rect {
-    stroke: rgba(20, 30, 40, 0.4);
-    stroke-width: 2;
-    filter: drop-shadow(0 3px 5px rgba(0,0,0,0.18));
-  }
-
-  #packet text {
-    fill: #ffffff;
-    font-size: 13px;
-    font-weight: 700;
-    text-anchor: middle;
-    dominant-baseline: middle;
-    pointer-events: none;
-  }
+#packet text {
+  fill: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
 </style>
 </head>
 <body>
-  <h1>5层因特网协议栈交互动画</h1>
-  <div class="subtitle">
-    参考《计算机网络：自顶向下方法（第8版）》第1章网络体系结构，演示应用层、传输层、网络层、链路层、物理层的封装、传输与解封装过程。
+
+<button id="themeToggleBtn" class="theme-toggle" type="button" aria-label="切换主题颜色" title="切换深色 / 浅色主题">
+  🌙 深色
+</button>
+
+<h1>5层因特网协议栈交互动画</h1>
+<div class="subtitle">
+  参考《计算机网络：自顶向下方法（第8版）》第1章网络体系结构，演示应用层、传输层、网络层、链路层、物理层的封装、传输与解封装过程。
+</div>
+
+<section class="controls" aria-label="控制面板">
+  <button id="playBtn" type="button">播放</button>
+  <button id="pauseBtn" type="button">暂停</button>
+  <button id="stepBtn" type="button">单步执行</button>
+  <button id="resetBtn" type="button">重置</button>
+
+  <div class="speed">
+    <label for="speedRange">速度</label>
+    <input id="speedRange" type="range" min="0.5" max="3" step="0.25" value="1" />
+    <span id="speedValue">1.00x</span>
   </div>
 
-  <section class="controls" aria-label="控制面板">
-    <button id="playBtn" type="button">播放</button>
-    <button id="pauseBtn" type="button">暂停</button>
-    <button id="stepBtn" type="button">单步执行</button>
-    <button id="resetBtn" type="button">重置</button>
-    <div class="speed">
-      <label for="speedRange">速度</label>
-      <input id="speedRange" type="range" min="0.5" max="3" step="0.25" value="1" />
-      <span id="speedValue">1.00x</span>
+  <div class="shortcut-hint" aria-label="快捷键说明">
+    <span><kbd>Space</kbd> 播放 / 暂停</span>
+    <span><kbd>S</kbd> / <kbd>→</kbd> 单步执行</span>
+    <span><kbd>R</kbd> 重置动画</span>
+    <span><kbd>T</kbd> 切换主题</span>
+  </div>
+</section>
+
+<main class="layout">
+  <section class="scene-panel" aria-label="实验场景">
+    <div class="panel">
+      <h2>实验场景：主机A → 交换机 → 路由器 → 主机B</h2>
+      <svg id="scene" viewBox="0 0 1080 560" role="img" aria-label="网络分层动画场景">
+        <!-- 链路 -->
+        <line class="wire" x1="240" y1="374" x2="330" y2="374"></line>
+        <line class="wire" x1="490" y1="374" x2="560" y2="374"></line>
+        <line class="wire" x1="730" y1="374" x2="840" y2="374"></line>
+
+        <text class="wire-label" x="285" y="358">以太网链路</text>
+        <text class="wire-label" x="525" y="358">以太网链路</text>
+        <text class="wire-label" x="785" y="358">以太网链路</text>
+
+        <!-- 主机A -->
+        <g class="device" data-device="hostA" tabindex="0" aria-label="主机A">
+          <rect class="device-box" x="40" y="80" width="200" height="370" rx="14"></rect>
+          <text class="device-title" x="140" y="68">主机A（发送端）</text>
+
+          <g class="layer-indicator" id="hostA-app">
+            <rect class="layer app-layer" x="55" y="110" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="140" y="134">应用层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostA-transport">
+            <rect class="layer transport-layer" x="55" y="170" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="140" y="194">传输层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostA-network">
+            <rect class="layer network-layer" x="55" y="230" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="140" y="254">网络层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostA-link">
+            <rect class="layer link-layer" x="55" y="290" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="140" y="314">链路层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostA-physical">
+            <rect class="layer physical-layer" x="55" y="350" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="140" y="374">物理层</text>
+          </g>
+        </g>
+
+        <!-- 交换机 -->
+        <g class="device" data-device="switch" tabindex="0" aria-label="交换机">
+          <rect class="device-box" x="330" y="285" width="160" height="160" rx="14"></rect>
+          <text class="device-title" x="410" y="273">交换机</text>
+
+          <g class="layer-indicator" id="switch-link">
+            <rect class="layer link-layer" x="345" y="305" width="130" height="42" rx="10"></rect>
+            <text class="layer-text" x="410" y="326">链路层</text>
+          </g>
+
+          <g class="layer-indicator" id="switch-physical">
+            <rect class="layer physical-layer" x="345" y="357" width="130" height="42" rx="10"></rect>
+            <text class="layer-text" x="410" y="378">物理层</text>
+          </g>
+        </g>
+
+        <!-- 路由器 -->
+        <g class="device" data-device="router" tabindex="0" aria-label="路由器">
+          <rect class="device-box" x="560" y="255" width="170" height="230" rx="14"></rect>
+          <text class="device-title" x="645" y="243">路由器</text>
+
+          <g class="layer-indicator" id="router-network">
+            <rect class="layer network-layer" x="575" y="275" width="140" height="42" rx="10"></rect>
+            <text class="layer-text" x="645" y="296">网络层</text>
+          </g>
+
+          <g class="layer-indicator" id="router-link">
+            <rect class="layer link-layer" x="575" y="327" width="140" height="42" rx="10"></rect>
+            <text class="layer-text" x="645" y="348">链路层</text>
+          </g>
+
+          <g class="layer-indicator" id="router-physical">
+            <rect class="layer physical-layer" x="575" y="379" width="140" height="42" rx="10"></rect>
+            <text class="layer-text" x="645" y="400">物理层</text>
+          </g>
+        </g>
+
+        <!-- 主机B -->
+        <g class="device" data-device="hostB" tabindex="0" aria-label="主机B">
+          <rect class="device-box" x="840" y="80" width="200" height="370" rx="14"></rect>
+          <text class="device-title" x="940" y="68">主机B（接收端）</text>
+
+          <g class="layer-indicator" id="hostB-app">
+            <rect class="layer app-layer" x="855" y="110" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="940" y="134">应用层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostB-transport">
+            <rect class="layer transport-layer" x="855" y="170" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="940" y="194">传输层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostB-network">
+            <rect class="layer network-layer" x="855" y="230" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="940" y="254">网络层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostB-link">
+            <rect class="layer link-layer" x="855" y="290" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="940" y="314">链路层</text>
+          </g>
+
+          <g class="layer-indicator" id="hostB-physical">
+            <rect class="layer physical-layer" x="855" y="350" width="170" height="48" rx="10"></rect>
+            <text class="layer-text" x="940" y="374">物理层</text>
+          </g>
+        </g>
+
+        <!-- 数据包 -->
+        <g id="packet" transform="translate(140,134)" aria-label="数据包">
+          <rect id="packetRect" x="-67" y="-23" width="134" height="46" rx="13" fill="#e74c3c"></rect>
+          <text id="packetText" x="0" y="1">HTTP 报文</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="note">
+      <strong>教学简化说明：</strong>
+      本动画仅演示单向数据传输，用于突出5层协议栈的核心功能。为降低复杂度，省略了 TCP 三次握手、确认与重传、ARP 地址解析、ICMP 差错报告、校验和计算、物理层编码与调制、路由器 TTL 减一后的首部校验和更新等细节。交换机转发表与路由器路由表均假设已经正确建立。
     </div>
   </section>
 
-  <main class="layout">
-    <section class="scene-panel" aria-label="实验场景">
-      <div class="panel">
-        <h2>实验场景：主机A → 交换机 → 路由器 → 主机B</h2>
-        <svg id="scene" viewBox="0 0 1080 560" role="img" aria-label="网络分层动画场景">
-          <!-- 链路 -->
-          <line class="wire" x1="240" y1="374" x2="330" y2="374"></line>
-          <line class="wire" x1="490" y1="374" x2="560" y2="374"></line>
-          <line class="wire" x1="730" y1="374" x2="840" y2="374"></line>
-
-          <text class="wire-label" x="285" y="358">以太网链路</text>
-          <text class="wire-label" x="525" y="358">以太网链路</text>
-          <text class="wire-label" x="785" y="358">以太网链路</text>
-
-          <!-- 主机A -->
-          <g class="device" data-device="hostA" tabindex="0" aria-label="主机A">
-            <rect class="device-box" x="40" y="80" width="200" height="370" rx="14"></rect>
-            <text class="device-title" x="140" y="68">主机A（发送端）</text>
-
-            <g class="layer-indicator" id="hostA-app">
-              <rect class="layer app-layer" x="55" y="110" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="140" y="134">应用层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostA-transport">
-              <rect class="layer transport-layer" x="55" y="170" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="140" y="194">传输层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostA-network">
-              <rect class="layer network-layer" x="55" y="230" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="140" y="254">网络层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostA-link">
-              <rect class="layer link-layer" x="55" y="290" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="140" y="314">链路层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostA-physical">
-              <rect class="layer physical-layer" x="55" y="350" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="140" y="374">物理层</text>
-            </g>
-          </g>
-
-          <!-- 交换机 -->
-          <g class="device" data-device="switch" tabindex="0" aria-label="交换机">
-            <rect class="device-box" x="330" y="285" width="160" height="160" rx="14"></rect>
-            <text class="device-title" x="410" y="273">交换机</text>
-
-            <g class="layer-indicator" id="switch-link">
-              <rect class="layer link-layer" x="345" y="305" width="130" height="42" rx="10"></rect>
-              <text class="layer-text" x="410" y="326">链路层</text>
-            </g>
-
-            <g class="layer-indicator" id="switch-physical">
-              <rect class="layer physical-layer" x="345" y="357" width="130" height="42" rx="10"></rect>
-              <text class="layer-text" x="410" y="378">物理层</text>
-            </g>
-          </g>
-
-          <!-- 路由器 -->
-          <g class="device" data-device="router" tabindex="0" aria-label="路由器">
-            <rect class="device-box" x="560" y="255" width="170" height="230" rx="14"></rect>
-            <text class="device-title" x="645" y="243">路由器</text>
-
-            <g class="layer-indicator" id="router-network">
-              <rect class="layer network-layer" x="575" y="275" width="140" height="42" rx="10"></rect>
-              <text class="layer-text" x="645" y="296">网络层</text>
-            </g>
-
-            <g class="layer-indicator" id="router-link">
-              <rect class="layer link-layer" x="575" y="327" width="140" height="42" rx="10"></rect>
-              <text class="layer-text" x="645" y="348">链路层</text>
-            </g>
-
-            <g class="layer-indicator" id="router-physical">
-              <rect class="layer physical-layer" x="575" y="379" width="140" height="42" rx="10"></rect>
-              <text class="layer-text" x="645" y="400">物理层</text>
-            </g>
-          </g>
-
-          <!-- 主机B -->
-          <g class="device" data-device="hostB" tabindex="0" aria-label="主机B">
-            <rect class="device-box" x="840" y="80" width="200" height="370" rx="14"></rect>
-            <text class="device-title" x="940" y="68">主机B（接收端）</text>
-
-            <g class="layer-indicator" id="hostB-app">
-              <rect class="layer app-layer" x="855" y="110" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="940" y="134">应用层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostB-transport">
-              <rect class="layer transport-layer" x="855" y="170" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="940" y="194">传输层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostB-network">
-              <rect class="layer network-layer" x="855" y="230" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="940" y="254">网络层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostB-link">
-              <rect class="layer link-layer" x="855" y="290" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="940" y="314">链路层</text>
-            </g>
-
-            <g class="layer-indicator" id="hostB-physical">
-              <rect class="layer physical-layer" x="855" y="350" width="170" height="48" rx="10"></rect>
-              <text class="layer-text" x="940" y="374">物理层</text>
-            </g>
-          </g>
-
-          <!-- 数据包 -->
-          <g id="packet" transform="translate(140,134)" aria-label="数据包">
-            <rect id="packetRect" x="-67" y="-23" width="134" height="46" rx="13" fill="#e74c3c"></rect>
-            <text id="packetText" x="0" y="1">HTTP 报文</text>
-          </g>
-        </svg>
-      </div>
-
-      <div class="note">
-        <strong>教学简化说明：</strong>
-        本动画仅演示单向数据传输，用于突出5层协议栈的核心功能。为降低复杂度，省略了 TCP 三次握手、确认与重传、ARP 地址解析、ICMP 差错报告、校验和计算、物理层编码与调制、路由器 TTL 减一后的首部校验和更新等细节。交换机转发表与路由器路由表均假设已经正确建立。
+  <aside class="side" aria-label="侧边信息区">
+    <section class="panel" aria-label="步骤说明">
+      <h2>步骤说明</h2>
+      <div id="stepTitle" style="font-weight:700;">第 1/20 步：应用层生成报文</div>
+      <div class="step-meta" id="stepMeta"></div>
+      <div class="step-desc" id="stepDesc"></div>
+      <div class="step-list-wrap">
+        <ol id="stepList"></ol>
       </div>
     </section>
 
-    <aside class="side" aria-label="侧边信息区">
-      <section class="panel" aria-label="步骤说明">
-        <h2>步骤说明</h2>
-        <div id="stepTitle" style="font-weight:700;">第 1/20 步：应用层生成报文</div>
-        <div class="step-meta" id="stepMeta"></div>
-        <div class="step-desc" id="stepDesc"></div>
-        <div class="step-list-wrap">
-          <ol id="stepList"></ol>
-        </div>
-      </section>
+    <section class="panel" aria-label="信息面板">
+      <h2>信息面板</h2>
+      <div class="info-content" id="infoContent">
+        点击设备或数据包，查看详细说明。
+      </div>
+    </section>
 
-      <section class="panel" aria-label="信息面板">
-        <h2>信息面板</h2>
-        <div class="info-content" id="infoContent">
-          点击设备或数据包，查看详细说明。
-        </div>
-      </section>
-
-      <section class="panel" aria-label="图例">
-        <h2>图例</h2>
-        <div class="legend-grid">
-          <div class="legend-item"><span class="swatch app"></span>应用层：HTTP 报文</div>
-          <div class="legend-item"><span class="swatch transport"></span>传输层：TCP 报文段</div>
-          <div class="legend-item"><span class="swatch network"></span>网络层：IP 数据报</div>
-          <div class="legend-item"><span class="swatch link"></span>链路层：以太网帧</div>
-          <div class="legend-item"><span class="swatch physical"></span>物理层：比特流</div>
-          <div class="legend-item">主机：实现完整5层协议栈</div>
-          <div class="legend-item">交换机：主要实现物理层与链路层</div>
-          <div class="legend-item">路由器：实现物理层、链路层与网络层</div>
-        </div>
-      </section>
-    </aside>
-  </main>
+    <section class="panel" aria-label="图例">
+      <h2>图例</h2>
+      <div class="legend-grid">
+        <div class="legend-item"><span class="swatch app"></span>应用层：HTTP 报文</div>
+        <div class="legend-item"><span class="swatch transport"></span>传输层：TCP 报文段</div>
+        <div class="legend-item"><span class="swatch network"></span>网络层：IP 数据报</div>
+        <div class="legend-item"><span class="swatch link"></span>链路层：以太网帧</div>
+        <div class="legend-item"><span class="swatch physical"></span>物理层：比特流</div>
+        <div class="legend-item">主机：实现完整5层协议栈</div>
+        <div class="legend-item">交换机：主要实现物理层与链路层</div>
+        <div class="legend-item">路由器：实现物理层、链路层与网络层</div>
+      </div>
+    </section>
+  </aside>
+</main>
 
 <script>
-  const STEPS = [
-    {
-      title: "应用层生成报文",
-      desc: "主机A的应用层生成 HTTP 请求报文。应用层协议直接服务于网络应用进程。",
-      x: 140, y: 134,
-      label: "HTTP 报文",
-      layer: "app",
-      device: "hostA",
-      pdu: "message",
-      duration: 1200,
-      info: "应用层协议数据单元为报文。此处以 HTTP 请求报文为例，后续将由下层逐层封装。"
-    },
-    {
-      title: "移交传输层",
-      desc: "应用层报文通过主机内部层间接口交给传输层。",
-      x: 140, y: 194,
-      label: "HTTP 报文",
-      layer: "transport",
-      device: "hostA",
-      pdu: "message",
-      duration: 750,
-      info: "层间通过服务访问点传递数据。为教学简化，未展示进程、端口与 socket 的具体细节。"
-    },
-    {
-      title: "传输层封装",
-      desc: "传输层使用 TCP，对报文添加端口号、序号、确认号、校验和等首部，形成 TCP 报文段。",
-      x: 140, y: 194,
-      label: "TCP 段",
-      layer: "transport",
-      device: "hostA",
-      pdu: "segment",
-      duration: 1450,
-      info: "TCP 报文段由 TCP 首部和载荷组成。载荷通常是应用层报文。此处不演示 TCP 三次握手与确认机制。"
-    },
-    {
-      title: "移交网络层",
-      desc: "TCP 报文段交给网络层，准备进行端到端的路由转发。",
-      x: 140, y: 254,
-      label: "TCP 段",
-      layer: "network",
-      device: "hostA",
-      pdu: "segment",
-      duration: 750,
-      info: "网络层将传输层报文段作为载荷，准备添加 IP 首部。"
-    },
-    {
-      title: "网络层封装",
-      desc: "网络层添加 IP 首部，包含源 IP 地址、目的 IP 地址、TTL 等字段，形成 IP 数据报。",
-      x: 140, y: 254,
-      label: "IP 数据报",
-      layer: "network",
-      device: "hostA",
-      pdu: "datagram",
-      duration: 1450,
-      info: "IP 数据报由 IP 首部和载荷组成。IP 地址用于跨网络定位主机，路由器依据目的 IP 地址进行转发。"
-    },
-    {
-      title: "移交链路层",
-      desc: "IP 数据报交给链路层，准备在相邻节点之间传输。",
-      x: 140, y: 314,
-      label: "IP 数据报",
-      layer: "link",
-      device: "hostA",
-      pdu: "datagram",
-      duration: 750,
-      info: "链路层负责相邻节点之间的数据传递。这里的相邻节点可以是主机、交换机或路由器接口。"
-    },
-    {
-      title: "链路层封装",
-      desc: "链路层添加以太网首部与尾部，包含源 MAC 地址、目的 MAC 地址、类型字段以及 FCS 校验，形成以太网帧。",
-      x: 140, y: 314,
-      label: "以太帧",
-      layer: "link",
-      device: "hostA",
-      pdu: "frame",
-      duration: 1450,
-      info: "以太网帧由以太网首部、载荷和尾部组成。MAC 地址用于同一链路上的相邻设备识别。为教学简化，不展示 CRC 计算。"
-    },
-    {
-      title: "移交物理层",
-      desc: "以太网帧交给物理层，准备转换为比特流。",
-      x: 140, y: 374,
-      label: "以太帧",
-      layer: "physical",
-      device: "hostA",
-      pdu: "frame",
-      duration: 750,
-      info: "物理层不改变帧的逻辑内容，只负责将帧转换为可在物理介质上传输的信号。"
-    },
-    {
-      title: "物理层发送比特流",
-      desc: "物理层将帧转换为比特，在主机A与交换机之间的链路上传输。",
-      x: 410, y: 375,
-      label: "比特流",
-      layer: "physical",
-      device: "hostA",
-      pdu: "bits",
-      duration: 2300,
-      info: "物理层传输比特。为教学简化，不展示编码、调制、时钟同步与信号衰减等细节。"
-    },
-    {
-      title: "交换机链路层处理",
-      desc: "交换机收到帧后，检查目的 MAC 地址，查找 MAC 地址表，并从对应端口转发。",
-      x: 410, y: 375,
-      label: "以太帧",
-      layer: "link",
-      device: "switch",
-      pdu: "frame",
-      duration: 1550,
-      info: "交换机是链路层设备，通常只处理物理层和链路层，不检查 IP 地址。此处假设 MAC 地址表已经建立。"
-    },
-    {
-      title: "交换机物理层转发",
-      desc: "交换机将比特流发送到路由器方向。",
-      x: 645, y: 375,
-      label: "比特流",
-      layer: "physical",
-      device: "switch",
-      pdu: "bits",
-      duration: 2100,
-      info: "交换机在物理层发送比特。动画中仍用同一数据包表示，以便观察整体路径。"
-    },
-    {
-      title: "路由器链路层接收",
-      desc: "路由器接口收到以太网帧，检查目的 MAC 地址，剥离以太网首部，将数据报提交给网络层。",
-      x: 645, y: 375,
-      label: "以太帧",
-      layer: "link",
-      device: "router",
-      pdu: "frame",
-      duration: 1400,
-      info: "路由器接口先处理链路层，再处理网络层。每经过一条链路，链路层帧都可能被重新封装。"
-    },
-    {
-      title: "路由器网络层转发",
-      desc: "路由器检查目的 IP 地址，查询路由表，决定下一跳。实际过程中还会将 TTL 减一。",
-      x: 645, y: 375,
-      label: "IP 数据报",
-      layer: "network",
-      device: "router",
-      pdu: "datagram",
-      duration: 1650,
-      info: "路由器是网络层设备，根据目的 IP 地址转发数据报。为教学简化，TTL 减一与首部校验和更新不以动画形式展开。"
-    },
-    {
-      title: "路由器链路层重新封装",
-      desc: "路由器用新的以太网首部重新封装数据报，目的 MAC 地址改为下一跳接口或主机B接口。",
-      x: 645, y: 375,
-      label: "以太帧",
-      layer: "link",
-      device: "router",
-      pdu: "frame",
-      duration: 1450,
-      info: "IP 数据报在网络层保持逻辑上的端到端传输，但链路层帧会在每一段链路重新封装。"
-    },
-    {
-      title: "物理层发送到主机B",
-      desc: "路由器物理层将新的以太网帧转换为比特流，发送到主机B。",
-      x: 940, y: 374,
-      label: "比特流",
-      layer: "physical",
-      device: "router",
-      pdu: "bits",
-      duration: 2300,
-      info: "比特流在路由器与主机B之间的物理链路上传输。"
-    },
-    {
-      title: "主机B链路层接收",
-      desc: "主机B检查目的 MAC 地址与 FCS，剥离以太网首部与尾部，将数据报交给网络层。",
-      x: 940, y: 314,
-      label: "以太帧",
-      layer: "link",
-      device: "hostB",
-      pdu: "frame",
-      duration: 1450,
-      info: "如果目的 MAC 与本机接口 MAC 匹配，主机B接收该帧并继续向上解封装。"
-    },
-    {
-      title: "主机B网络层处理",
-      desc: "主机B检查 IP 首部，确认目的 IP 地址后，剥离 IP 首部，将载荷交给传输层。",
-      x: 940, y: 254,
-      label: "IP 数据报",
-      layer: "network",
-      device: "hostB",
-      pdu: "datagram",
-      duration: 1450,
-      info: "网络层处理完成后，IP 首部被剥离，剩余载荷为传输层报文段。"
-    },
-    {
-      title: "主机B传输层处理",
-      desc: "主机B根据端口号将报文段交付给对应应用进程，并处理 TCP 相关字段。",
-      x: 940, y: 194,
-      label: "TCP 段",
-      layer: "transport",
-      device: "hostB",
-      pdu: "segment",
-      duration: 1450,
-      info: "端口号用于区分主机中的应用进程。为教学简化，不演示 TCP 确认、重传与流量控制。"
-    },
-    {
-      title: "主机B应用层处理",
-      desc: "HTTP 报文交付主机B应用层，接收端应用进程读取请求内容。",
-      x: 940, y: 134,
-      label: "HTTP 报文",
-      layer: "app",
-      device: "hostB",
-      pdu: "message",
-      duration: 1550,
-      info: "接收端自底向上完成解封装，最终恢复应用层报文。"
-    },
-    {
-      title: "完成",
-      desc: "一次单向数据传输完成。实际互联网通信还需要 TCP 握手、确认、重传等机制。",
-      x: 940, y: 134,
-      label: "HTTP 报文",
-      layer: "app",
-      device: "hostB",
-      pdu: "message",
-      duration: 1000,
-      info: "本动画用于教学演示，重点在于展示分层、封装、路由转发与解封装的过程。"
-    }
-  ];
+const STEPS = [
+  {
+    title: "应用层生成报文",
+    desc: "主机A的应用层生成 HTTP 请求报文。应用层协议直接服务于网络应用进程。",
+    x: 140,
+    y: 134,
+    label: "HTTP 报文",
+    layer: "app",
+    device: "hostA",
+    pdu: "message",
+    duration: 1200,
+    info: "应用层协议数据单元为报文。此处以 HTTP 请求报文为例，后续将由下层逐层封装。"
+  },
+  {
+    title: "移交传输层",
+    desc: "应用层报文通过主机内部层间接口交给传输层。",
+    x: 140,
+    y: 194,
+    label: "HTTP 报文",
+    layer: "transport",
+    device: "hostA",
+    pdu: "message",
+    duration: 750,
+    info: "层间通过服务访问点传递数据。为教学简化，未展示进程、端口与 socket 的具体细节。"
+  },
+  {
+    title: "传输层封装",
+    desc: "传输层使用 TCP，对报文添加端口号、序号、确认号、校验和等首部，形成 TCP 报文段。",
+    x: 140,
+    y: 194,
+    label: "TCP 段",
+    layer: "transport",
+    device: "hostA",
+    pdu: "segment",
+    duration: 1450,
+    info: "TCP 报文段由 TCP 首部和载荷组成。载荷通常是应用层报文。此处不演示 TCP 三次握手与确认机制。"
+  },
+  {
+    title: "移交网络层",
+    desc: "TCP 报文段交给网络层，准备进行端到端的路由转发。",
+    x: 140,
+    y: 254,
+    label: "TCP 段",
+    layer: "network",
+    device: "hostA",
+    pdu: "segment",
+    duration: 750,
+    info: "网络层将传输层报文段作为载荷，准备添加 IP 首部。"
+  },
+  {
+    title: "网络层封装",
+    desc: "网络层添加 IP 首部，包含源 IP 地址、目的 IP 地址、TTL 等字段，形成 IP 数据报。",
+    x: 140,
+    y: 254,
+    label: "IP 数据报",
+    layer: "network",
+    device: "hostA",
+    pdu: "datagram",
+    duration: 1450,
+    info: "IP 数据报由 IP 首部和载荷组成。IP 地址用于跨网络定位主机，路由器依据目的 IP 地址进行转发。"
+  },
+  {
+    title: "移交链路层",
+    desc: "IP 数据报交给链路层，准备在相邻节点之间传输。",
+    x: 140,
+    y: 314,
+    label: "IP 数据报",
+    layer: "link",
+    device: "hostA",
+    pdu: "datagram",
+    duration: 750,
+    info: "链路层负责相邻节点之间的数据传递。这里的相邻节点可以是主机、交换机或路由器接口。"
+  },
+  {
+    title: "链路层封装",
+    desc: "链路层添加以太网首部与尾部，包含源 MAC 地址、目的 MAC 地址、类型字段以及 FCS 校验，形成以太网帧。",
+    x: 140,
+    y: 314,
+    label: "以太帧",
+    layer: "link",
+    device: "hostA",
+    pdu: "frame",
+    duration: 1450,
+    info: "以太网帧由以太网首部、载荷和尾部组成。MAC 地址用于同一链路上的相邻设备识别。为教学简化，不展示 CRC 计算。"
+  },
+  {
+    title: "移交物理层",
+    desc: "以太网帧交给物理层，准备转换为比特流。",
+    x: 140,
+    y: 374,
+    label: "以太帧",
+    layer: "physical",
+    device: "hostA",
+    pdu: "frame",
+    duration: 750,
+    info: "物理层不改变帧的逻辑内容，只负责将帧转换为可在物理介质上传输的信号。"
+  },
+  {
+    title: "物理层发送比特流",
+    desc: "物理层将帧转换为比特，在主机A与交换机之间的链路上传输。",
+    x: 410,
+    y: 375,
+    label: "比特流",
+    layer: "physical",
+    device: "hostA",
+    pdu: "bits",
+    duration: 2300,
+    info: "物理层传输比特。为教学简化，不展示编码、调制、时钟同步与信号衰减等细节。"
+  },
+  {
+    title: "交换机链路层处理",
+    desc: "交换机收到帧后，检查目的 MAC 地址，查找 MAC 地址表，并从对应端口转发。",
+    x: 410,
+    y: 375,
+    label: "以太帧",
+    layer: "link",
+    device: "switch",
+    pdu: "frame",
+    duration: 1550,
+    info: "交换机是链路层设备，通常只处理物理层和链路层，不检查 IP 地址。此处假设 MAC 地址表已经建立。"
+  },
+  {
+    title: "交换机物理层转发",
+    desc: "交换机将比特流发送到路由器方向。",
+    x: 645,
+    y: 375,
+    label: "比特流",
+    layer: "physical",
+    device: "switch",
+    pdu: "bits",
+    duration: 2100,
+    info: "交换机在物理层发送比特。动画中仍用同一数据包表示，以便观察整体路径。"
+  },
+  {
+    title: "路由器链路层接收",
+    desc: "路由器接口收到以太网帧，检查目的 MAC 地址，剥离以太网首部，将数据报提交给网络层。",
+    x: 645,
+    y: 375,
+    label: "以太帧",
+    layer: "link",
+    device: "router",
+    pdu: "frame",
+    duration: 1400,
+    info: "路由器接口先处理链路层，再处理网络层。每经过一条链路，链路层帧都可能被重新封装。"
+  },
+  {
+    title: "路由器网络层转发",
+    desc: "路由器检查目的 IP 地址，查询路由表，决定下一跳。实际过程中还会将 TTL 减一。",
+    x: 645,
+    y: 375,
+    label: "IP 数据报",
+    layer: "network",
+    device: "router",
+    pdu: "datagram",
+    duration: 1650,
+    info: "路由器是网络层设备，根据目的 IP 地址转发数据报。为教学简化，TTL 减一与首部校验和更新不以动画形式展开。"
+  },
+  {
+    title: "路由器链路层重新封装",
+    desc: "路由器用新的以太网首部重新封装数据报，目的 MAC 地址改为下一跳接口或主机B接口。",
+    x: 645,
+    y: 375,
+    label: "以太帧",
+    layer: "link",
+    device: "router",
+    pdu: "frame",
+    duration: 1450,
+    info: "IP 数据报在网络层保持逻辑上的端到端传输，但链路层帧会在每一段链路重新封装。"
+  },
+  {
+    title: "物理层发送到主机B",
+    desc: "路由器物理层将新的以太网帧转换为比特流，发送到主机B。",
+    x: 940,
+    y: 374,
+    label: "比特流",
+    layer: "physical",
+    device: "router",
+    pdu: "bits",
+    duration: 2300,
+    info: "比特流在路由器与主机B之间的物理链路上传输。"
+  },
+  {
+    title: "主机B链路层接收",
+    desc: "主机B检查目的 MAC 地址与 FCS，剥离以太网首部与尾部，将数据报交给网络层。",
+    x: 940,
+    y: 314,
+    label: "以太帧",
+    layer: "link",
+    device: "hostB",
+    pdu: "frame",
+    duration: 1450,
+    info: "如果目的 MAC 与本机接口 MAC 匹配，主机B接收该帧并继续向上解封装。"
+  },
+  {
+    title: "主机B网络层处理",
+    desc: "主机B检查 IP 首部，确认目的 IP 地址后，剥离 IP 首部，将载荷交给传输层。",
+    x: 940,
+    y: 254,
+    label: "IP 数据报",
+    layer: "network",
+    device: "hostB",
+    pdu: "datagram",
+    duration: 1450,
+    info: "网络层处理完成后，IP 首部被剥离，剩余载荷为传输层报文段。"
+  },
+  {
+    title: "主机B传输层处理",
+    desc: "主机B根据端口号将报文段交付给对应应用进程，并处理 TCP 相关字段。",
+    x: 940,
+    y: 194,
+    label: "TCP 段",
+    layer: "transport",
+    device: "hostB",
+    pdu: "segment",
+    duration: 1450,
+    info: "端口号用于区分主机中的应用进程。为教学简化，不演示 TCP 确认、重传与流量控制。"
+  },
+  {
+    title: "主机B应用层处理",
+    desc: "HTTP 报文交付主机B应用层，接收端应用进程读取请求内容。",
+    x: 940,
+    y: 134,
+    label: "HTTP 报文",
+    layer: "app",
+    device: "hostB",
+    pdu: "message",
+    duration: 1550,
+    info: "接收端自底向上完成解封装，最终恢复应用层报文。"
+  },
+  {
+    title: "完成",
+    desc: "一次单向数据传输完成。实际互联网通信还需要 TCP 握手、确认、重传等机制。",
+    x: 940,
+    y: 134,
+    label: "HTTP 报文",
+    layer: "app",
+    device: "hostB",
+    pdu: "message",
+    duration: 1000,
+    info: "本动画用于教学演示，重点在于展示分层、封装、路由转发与解封装的过程。"
+  }
+];
 
-  const LAYER_NAMES = {
-    app: "应用层",
-    transport: "传输层",
-    network: "网络层",
-    link: "链路层",
-    physical: "物理层"
-  };
+const LAYER_NAMES = {
+  app: "应用层",
+  transport: "传输层",
+  network: "网络层",
+  link: "链路层",
+  physical: "物理层"
+};
 
-  const PDU_NAMES = {
-    message: "报文",
-    segment: "报文段",
-    datagram: "数据报",
-    frame: "帧",
-    bits: "比特流"
-  };
+const PDU_NAMES = {
+  message: "报文",
+  segment: "报文段",
+  datagram: "数据报",
+  frame: "帧",
+  bits: "比特流"
+};
 
-  const DEVICE_NAMES = {
-    hostA: "主机A",
-    hostB: "主机B",
-    switch: "交换机",
-    router: "路由器"
-  };
+const DEVICE_NAMES = {
+  hostA: "主机A",
+  hostB: "主机B",
+  switch: "交换机",
+  router: "路由器"
+};
 
-  const DEVICE_INFO = {
-    hostA: `
-      <h3>主机A（发送端）</h3>
-      <p>主机A实现完整5层协议栈：应用层、传输层、网络层、链路层、物理层。</p>
-      <ul>
-        <li>应用层：生成应用报文。</li>
-        <li>传输层：提供进程间通信，添加端口号等。</li>
-        <li>网络层：添加IP地址，实现端到端寻址。</li>
-        <li>链路层：添加MAC地址，服务相邻节点。</li>
-        <li>物理层：将帧转换为比特流。</li>
-      </ul>
-    `,
-    switch: `
-      <h3>交换机</h3>
-      <p>交换机主要实现物理层和链路层功能。</p>
-      <ul>
-        <li>接收比特流并还原为以太网帧。</li>
-        <li>检查目的MAC地址。</li>
-        <li>查询MAC地址表。</li>
-        <li>从对应端口转发帧。</li>
-      </ul>
-      <p>交换机通常不检查IP地址，也不做网络层路由。</p>
-    `,
-    router: `
-      <h3>路由器</h3>
-      <p>路由器实现物理层、链路层和网络层功能。</p>
-      <ul>
-        <li>接收并解封装链路层帧。</li>
-        <li>检查IP数据报中的目的IP地址。</li>
-        <li>查询路由表，决定下一跳。</li>
-        <li>重新封装新的链路层帧并转发。</li>
-      </ul>
-      <p>路由器是网络层设备，但每个接口都必须具备链路层与物理层能力。</p>
-    `,
-    hostB: `
-      <h3>主机B（接收端）</h3>
-      <p>主机B实现完整5层协议栈，并按自底向上的方式解封装。</p>
-      <ul>
-        <li>物理层接收比特流。</li>
-        <li>链路层检查MAC地址。</li>
-        <li>网络层检查IP地址。</li>
-        <li>传输层根据端口交付进程。</li>
-        <li>应用层处理HTTP报文。</li>
-      </ul>
-    `
-  };
+const DEVICE_INFO = {
+  hostA: `
+    <h3>主机A（发送端）</h3>
+    <p>主机A实现完整5层协议栈：应用层、传输层、网络层、链路层、物理层。</p>
+    <ul>
+      <li>应用层：生成应用报文。</li>
+      <li>传输层：提供进程间通信，添加端口号等。</li>
+      <li>网络层：添加IP地址，实现端到端寻址。</li>
+      <li>链路层：添加MAC地址，服务相邻节点。</li>
+      <li>物理层：将帧转换为比特流。</li>
+    </ul>
+  `,
+  switch: `
+    <h3>交换机</h3>
+    <p>交换机主要实现物理层和链路层功能。</p>
+    <ul>
+      <li>接收比特流并还原为以太网帧。</li>
+      <li>检查目的MAC地址。</li>
+      <li>查询MAC地址表。</li>
+      <li>从对应端口转发帧。</li>
+    </ul>
+    <p>交换机通常不检查IP地址，也不做网络层路由。</p>
+  `,
+  router: `
+    <h3>路由器</h3>
+    <p>路由器实现物理层、链路层和网络层功能。</p>
+    <ul>
+      <li>接收并解封装链路层帧。</li>
+      <li>检查IP数据报中的目的IP地址。</li>
+      <li>查询路由表，决定下一跳。</li>
+      <li>重新封装新的链路层帧并转发。</li>
+    </ul>
+    <p>路由器是网络层设备，但每个接口都必须具备链路层与物理层能力。</p>
+  `,
+  hostB: `
+    <h3>主机B（接收端）</h3>
+    <p>主机B实现完整5层协议栈，并按自底向上的方式解封装。</p>
+    <ul>
+      <li>物理层接收比特流。</li>
+      <li>链路层检查MAC地址。</li>
+      <li>网络层检查IP地址。</li>
+      <li>传输层根据端口交付进程。</li>
+      <li>应用层处理HTTP报文。</li>
+    </ul>
+  `
+};
 
-  const LAYER_COLORS = {
-    app: "#e74c3c",
-    transport: "#f39c12",
-    network: "#3498db",
-    link: "#2ecc71",
-    physical: "#9b59b6"
-  };
+const LAYER_COLORS = {
+  app: "#e74c3c",
+  transport: "#f39c12",
+  network: "#3498db",
+  link: "#2ecc71",
+  physical: "#9b59b6"
+};
 
-  const state = {
-    idx: 0,
-    progress: 0,
-    playing: false,
-    completed: false,
-    speed: 1,
-    startPos: { x: STEPS[0].x, y: STEPS[0].y },
-    packetPos: { x: STEPS[0].x, y: STEPS[0].y }
-  };
+const THEME_STORAGE_KEY = "five-layer-theme";
 
-  const playBtn = document.getElementById("playBtn");
-  const pauseBtn = document.getElementById("pauseBtn");
-  const stepBtn = document.getElementById("stepBtn");
-  const resetBtn = document.getElementById("resetBtn");
-  const speedRange = document.getElementById("speedRange");
-  const speedValue = document.getElementById("speedValue");
+const state = {
+  idx: 0,
+  progress: 0,
+  playing: false,
+  completed: false,
+  speed: 1,
+  startPos: { x: STEPS[0].x, y: STEPS[0].y },
+  packetPos: { x: STEPS[0].x, y: STEPS[0].y }
+};
 
-  const stepTitle = document.getElementById("stepTitle");
-  const stepMeta = document.getElementById("stepMeta");
-  const stepDesc = document.getElementById("stepDesc");
-  const stepList = document.getElementById("stepList");
-  const infoContent = document.getElementById("infoContent");
+const playBtn = document.getElementById("playBtn");
+const pauseBtn = document.getElementById("pauseBtn");
+const stepBtn = document.getElementById("stepBtn");
+const resetBtn = document.getElementById("resetBtn");
+const speedRange = document.getElementById("speedRange");
+const speedValue = document.getElementById("speedValue");
+const stepTitle = document.getElementById("stepTitle");
+const stepMeta = document.getElementById("stepMeta");
+const stepDesc = document.getElementById("stepDesc");
+const stepList = document.getElementById("stepList");
+const infoContent = document.getElementById("infoContent");
+const packet = document.getElementById("packet");
+const packetRect = document.getElementById("packetRect");
+const packetText = document.getElementById("packetText");
+const themeToggleBtn = document.getElementById("themeToggleBtn");
 
-  const packet = document.getElementById("packet");
-  const packetRect = document.getElementById("packetRect");
-  const packetText = document.getElementById("packetText");
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (error) {
+    return null;
+  }
+}
+
+function setStoredTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (error) {
+    // localStorage 不可用时不保存主题偏好。
+  }
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", nextTheme);
+
+  if (themeToggleBtn) {
+    themeToggleBtn.textContent = nextTheme === "dark" ? "☀️ 浅色" : "🌙 深色";
+    themeToggleBtn.setAttribute("aria-pressed", String(nextTheme === "dark"));
+    themeToggleBtn.title =
+      nextTheme === "dark"
+        ? "切换到浅色主题（快捷键 T）"
+        : "切换到深色主题（快捷键 T）";
   }
 
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
+  setStoredTheme(nextTheme);
+}
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute("data-theme");
+  applyTheme(currentTheme === "dark" ? "light" : "dark");
+}
+
+function updatePlayButton() {
+  playBtn.textContent = state.playing ? "播放中..." : "播放";
+}
+
+function clearActiveLayers() {
+  document.querySelectorAll(".layer-indicator.active").forEach((el) => {
+    el.classList.remove("active");
+  });
+}
+
+function setActiveLayer(step) {
+  clearActiveLayers();
+  const id = `${step.device}-${step.layer}`;
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.add("active");
+  }
+}
+
+function updateStepListActive() {
+  Array.from(stepList.children).forEach((li, index) => {
+    li.classList.toggle("active", index === state.idx);
+  });
+
+  const current = stepList.children[state.idx];
+  if (current && current.scrollIntoView) {
+    current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function applyStepUI() {
+  const step = STEPS[state.idx];
+
+  stepTitle.textContent = `第 ${state.idx + 1}/${STEPS.length} 步：${step.title}`;
+  stepMeta.textContent = `设备：${DEVICE_NAMES[step.device] || "网络链路"}｜层：${LAYER_NAMES[step.layer]}｜PDU：${PDU_NAMES[step.pdu]}`;
+  stepDesc.textContent = step.desc;
+
+  packetText.textContent = step.label;
+  packetRect.setAttribute("fill", LAYER_COLORS[step.layer] || "#64748b");
+
+  setActiveLayer(step);
+  updateStepListActive();
+}
+
+function renderPacket() {
+  const step = STEPS[state.idx];
+  const t = easeInOut(clamp(state.progress, 0, 1));
+
+  const x = lerp(state.startPos.x, step.x, t);
+  const y = lerp(state.startPos.y, step.y, t);
+
+  state.packetPos = { x, y };
+
+  let scale = 1;
+  const samePosition =
+    Math.abs(state.startPos.x - step.x) < 0.1 &&
+    Math.abs(state.startPos.y - step.y) < 0.1;
+
+  if (samePosition) {
+    scale = 1 + 0.045 * Math.sin(Math.PI * clamp(state.progress, 0, 1));
   }
 
-  function easeInOut(t) {
-    return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-  }
+  packet.setAttribute("transform", `translate(${x}, ${y}) scale(${scale})`);
+}
 
-  function updatePlayButton() {
-    playBtn.textContent = state.playing ? "播放中..." : "播放";
-  }
+function showDefaultInfo() {
+  infoContent.innerHTML = "点击设备或数据包，查看详细说明。";
+}
 
-  function clearActiveLayers() {
-    document.querySelectorAll(".layer-indicator.active").forEach((el) => {
-      el.classList.remove("active");
-    });
-  }
-
-  function setActiveLayer(step) {
-    clearActiveLayers();
-    const id = `${step.device}-${step.layer}`;
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.add("active");
-    }
-  }
-
-  function updateStepListActive() {
-    Array.from(stepList.children).forEach((li, index) => {
-      li.classList.toggle("active", index === state.idx);
-    });
-
-    const current = stepList.children[state.idx];
-    if (current && current.scrollIntoView) {
-      current.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
-  }
-
-  function applyStepUI() {
-    const step = STEPS[state.idx];
-
-    stepTitle.textContent = `第 ${state.idx + 1}/${STEPS.length} 步：${step.title}`;
-    stepMeta.textContent = `设备：${DEVICE_NAMES[step.device] || "网络链路"}｜层：${LAYER_NAMES[step.layer]}｜PDU：${PDU_NAMES[step.pdu]}`;
-    stepDesc.textContent = step.desc;
-
-    packetText.textContent = step.label;
-    packetRect.setAttribute("fill", LAYER_COLORS[step.layer] || "#64748b");
-
-    setActiveLayer(step);
-    updateStepListActive();
-  }
-
-  function renderPacket() {
-    const step = STEPS[state.idx];
-    const t = easeInOut(clamp(state.progress, 0, 1));
-    const x = lerp(state.startPos.x, step.x, t);
-    const y = lerp(state.startPos.y, step.y, t);
-
-    state.packetPos = { x, y };
-
-    let scale = 1;
-    const samePosition = Math.abs(state.startPos.x - step.x) < 0.1 && Math.abs(state.startPos.y - step.y) < 0.1;
-    if (samePosition) {
-      scale = 1 + 0.045 * Math.sin(Math.PI * clamp(state.progress, 0, 1));
-    }
-
-    packet.setAttribute("transform", `translate(${x}, ${y}) scale(${scale})`);
-  }
-
-  function showDefaultInfo() {
-    infoContent.innerHTML = "点击设备或数据包，查看详细说明。";
-  }
-
-  function showDeviceInfo(device) {
-    infoContent.innerHTML = DEVICE_INFO[device] || showDefaultInfo();
-  }
-
-  function showPacketInfo() {
-    const step = STEPS[state.idx];
-    infoContent.innerHTML = `
-      <h3>数据包详情</h3>
-      <dl>
-        <dt>当前步骤</dt>
-        <dd>${step.title}</dd>
-        <dt>当前位置</dt>
-        <dd>${DEVICE_NAMES[step.device] || "网络链路"}</dd>
-        <dt>当前层</dt>
-        <dd>${LAYER_NAMES[step.layer]}</dd>
-        <dt>PDU 类型</dt>
-        <dd>${PDU_NAMES[step.pdu]}</dd>
-        <dt>当前显示标签</dt>
-        <dd>${step.label}</dd>
-        <dt>说明</dt>
-        <dd>${step.info}</dd>
-      </dl>
-    `;
-  }
-
-  function pause() {
-    state.playing = false;
-    updatePlayButton();
-  }
-
-  function play() {
-    if (state.completed) {
-      resetAnimation();
-    }
-    state.playing = true;
-    updatePlayButton();
-  }
-
-  function resetAnimation() {
-    pause();
-    state.idx = 0;
-    state.progress = 0;
-    state.completed = false;
-    state.startPos = { x: STEPS[0].x, y: STEPS[0].y };
-    state.packetPos = { x: STEPS[0].x, y: STEPS[0].y };
-    applyStepUI();
-    renderPacket();
+function showDeviceInfo(device) {
+  const html = DEVICE_INFO[device];
+  if (!html) {
     showDefaultInfo();
+    return;
+  }
+  infoContent.innerHTML = html;
+}
+
+function showPacketInfo() {
+  const step = STEPS[state.idx];
+
+  infoContent.innerHTML = `
+    <h3>数据包详情</h3>
+    <dl>
+      <dt>当前步骤</dt>
+      <dd>${step.title}</dd>
+      <dt>当前位置</dt>
+      <dd>${DEVICE_NAMES[step.device] || "网络链路"}</dd>
+      <dt>当前层</dt>
+      <dd>${LAYER_NAMES[step.layer]}</dd>
+      <dt>PDU 类型</dt>
+      <dd>${PDU_NAMES[step.pdu]}</dd>
+      <dt>当前显示标签</dt>
+      <dd>${step.label}</dd>
+      <dt>说明</dt>
+      <dd>${step.info}</dd>
+    </dl>
+  `;
+}
+
+function pause() {
+  state.playing = false;
+  updatePlayButton();
+}
+
+function play() {
+  if (state.completed) {
+    resetAnimation();
   }
 
-  function goToStep(index) {
-    if (index < 0 || index >= STEPS.length) return;
+  state.playing = true;
+  updatePlayButton();
+}
 
+function togglePlayPause() {
+  if (state.playing) {
     pause();
+  } else {
+    play();
+  }
+}
 
-    state.idx = index;
-    state.progress = 0;
-    state.completed = false;
+function resetAnimation() {
+  pause();
 
-    const step = STEPS[index];
-    state.startPos = { x: step.x, y: step.y };
-    state.packetPos = { x: step.x, y: step.y };
+  state.idx = 0;
+  state.progress = 0;
+  state.completed = false;
+  state.startPos = { x: STEPS[0].x, y: STEPS[0].y };
+  state.packetPos = { x: STEPS[0].x, y: STEPS[0].y };
 
-    applyStepUI();
+  applyStepUI();
+  renderPacket();
+  showDefaultInfo();
+}
+
+function goToStep(index) {
+  if (index < 0 || index >= STEPS.length) {
+    return;
+  }
+
+  pause();
+
+  state.idx = index;
+  state.progress = 0;
+  state.completed = false;
+
+  const step = STEPS[index];
+  state.startPos = { x: step.x, y: step.y };
+  state.packetPos = { x: step.x, y: step.y };
+
+  applyStepUI();
+  renderPacket();
+  showPacketInfo();
+}
+
+function singleStep() {
+  pause();
+
+  if (state.idx < STEPS.length - 1) {
+    goToStep(state.idx + 1);
+  } else {
+    state.completed = true;
+    state.progress = 1;
     renderPacket();
-    showPacketInfo();
   }
+}
 
-  function singleStep() {
-    pause();
-    if (state.idx < STEPS.length - 1) {
-      goToStep(state.idx + 1);
-    } else {
-      state.completed = true;
-      state.progress = 1;
-      renderPacket();
-    }
-  }
+playBtn.addEventListener("click", (event) => {
+  play();
+  event.currentTarget.blur();
+});
 
-  playBtn.addEventListener("click", play);
-  pauseBtn.addEventListener("click", pause);
-  stepBtn.addEventListener("click", singleStep);
-  resetBtn.addEventListener("click", resetAnimation);
+pauseBtn.addEventListener("click", (event) => {
+  pause();
+  event.currentTarget.blur();
+});
 
-  speedRange.addEventListener("input", (event) => {
-    state.speed = Number(event.target.value);
-    speedValue.textContent = `${state.speed.toFixed(2)}x`;
-  });
+stepBtn.addEventListener("click", (event) => {
+  singleStep();
+  event.currentTarget.blur();
+});
 
-  packet.addEventListener("click", (event) => {
+resetBtn.addEventListener("click", (event) => {
+  resetAnimation();
+  event.currentTarget.blur();
+});
+
+themeToggleBtn.addEventListener("click", (event) => {
+  toggleTheme();
+  event.currentTarget.blur();
+});
+
+speedRange.addEventListener("input", (event) => {
+  state.speed = Number(event.target.value);
+  speedValue.textContent = `${state.speed.toFixed(2)}x`;
+});
+
+packet.addEventListener("click", (event) => {
+  event.stopPropagation();
+  showPacketInfo();
+});
+
+document.querySelectorAll(".device").forEach((device) => {
+  device.addEventListener("click", (event) => {
     event.stopPropagation();
-    showPacketInfo();
+    showDeviceInfo(device.dataset.device);
+    if (device.blur) {
+      device.blur();
+    }
   });
 
-  document.querySelectorAll(".device").forEach((device) => {
-    device.addEventListener("click", (event) => {
+  device.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
       event.stopPropagation();
       showDeviceInfo(device.dataset.device);
-    });
-
-    device.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        showDeviceInfo(device.dataset.device);
+      if (device.blur) {
+        device.blur();
       }
-    });
-  });
-
-  STEPS.forEach((step, index) => {
-    const li = document.createElement("li");
-    li.textContent = `${index + 1}. ${step.title}`;
-    li.addEventListener("click", () => {
-      goToStep(index);
-    });
-    stepList.appendChild(li);
-  });
-
-  let lastTime = null;
-
-  function animationFrame(timestamp) {
-    if (lastTime === null) {
-      lastTime = timestamp;
     }
+  });
+});
 
-    const dt = Math.min(timestamp - lastTime, 100);
-    lastTime = timestamp;
+STEPS.forEach((step, index) => {
+  const li = document.createElement("li");
+  li.textContent = `${index + 1}. ${step.title}`;
+  li.addEventListener("click", () => {
+    goToStep(index);
+  });
+  stepList.appendChild(li);
+});
 
-    if (state.playing && !state.completed) {
-      const step = STEPS[state.idx];
-      state.progress += (dt * state.speed) / step.duration;
-
-      if (state.progress >= 1) {
-        state.progress = 1;
-        renderPacket();
-
-        if (state.idx < STEPS.length - 1) {
-          state.idx += 1;
-          state.progress = 0;
-          state.startPos = { ...state.packetPos };
-          applyStepUI();
-        } else {
-          state.completed = true;
-          state.playing = false;
-          updatePlayButton();
-        }
-      }
-
-      renderPacket();
-    }
-
-    requestAnimationFrame(animationFrame);
+window.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
   }
 
-  resetAnimation();
+  if (event.isComposing) {
+    return;
+  }
+
+  const target = event.target;
+  const tagName = target && target.tagName ? target.tagName.toUpperCase() : "";
+
+  // 文本类输入控件中不触发快捷键，避免影响输入。
+  if (tagName === "TEXTAREA" || tagName === "SELECT" || (target && target.isContentEditable)) {
+    return;
+  }
+
+  if (tagName === "INPUT") {
+    const type = (target.type || "").toLowerCase();
+    if (["text", "search", "email", "password", "number", "url", "tel"].includes(type)) {
+      return;
+    }
+  }
+
+  // 当焦点位于按钮上时，Space / Enter 优先触发按钮自身行为。
+  const active = document.activeElement;
+  if (active && active.tagName === "BUTTON" && (event.key === " " || event.key === "Enter")) {
+    return;
+  }
+
+  // 当焦点位于设备图形上时，Space / Enter 优先查看设备信息。
+  if (target && target.closest && target.closest(".device") && (event.key === " " || event.key === "Enter")) {
+    return;
+  }
+
+  switch (event.key) {
+    case " ":
+    case "Spacebar":
+      event.preventDefault();
+      togglePlayPause();
+      break;
+
+    case "s":
+    case "S":
+    case "ArrowRight":
+      event.preventDefault();
+      singleStep();
+      break;
+
+    case "r":
+    case "R":
+      event.preventDefault();
+      resetAnimation();
+      break;
+
+    case "t":
+    case "T":
+      event.preventDefault();
+      toggleTheme();
+      break;
+
+    default:
+      break;
+  }
+});
+
+let lastTime = null;
+
+function animationFrame(timestamp) {
+  if (lastTime === null) {
+    lastTime = timestamp;
+  }
+
+  const dt = Math.min(timestamp - lastTime, 100);
+  lastTime = timestamp;
+
+  if (state.playing && !state.completed) {
+    const step = STEPS[state.idx];
+
+    state.progress += (dt * state.speed) / step.duration;
+
+    if (state.progress >= 1) {
+      state.progress = 1;
+      renderPacket();
+
+      if (state.idx < STEPS.length - 1) {
+        state.idx += 1;
+        state.progress = 0;
+        state.startPos = { ...state.packetPos };
+        applyStepUI();
+      } else {
+        state.completed = true;
+        state.playing = false;
+        updatePlayButton();
+      }
+    }
+
+    renderPacket();
+  }
+
   requestAnimationFrame(animationFrame);
+}
+
+// 初始化主题与动画状态。
+applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light");
+resetAnimation();
+requestAnimationFrame(animationFrame);
 </script>
 </body>
 </html>

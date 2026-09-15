@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>计算机网络实验：吞吐量与瓶颈链路演示</title>
+<style>
+/* ================= 主题变量 ================= */
+:root,
+[data-theme="light"] {
+  --primary-color: #2563eb;
+  --bg-color: #f4f6f8;
+  --panel-bg: #ffffff;
+  --panel-section-bg: #fafafa;
+  --text-main: #1a202c;
+  --text-sub: #64748b;
+  --border-color: #e2e8f0;
+  --step-bg: #eff6ff;
+
+  --canvas-bg: #e2e8f0;
+
+  --legend-bg: rgba(15, 23, 42, 0.06);
+  --legend-text: #334155;
+  --legend-border: rgba(15, 23, 42, 0.15);
+
+  --btn-secondary: #64748b;
+  --disabled-bg: #cbd5e1;
+  --disabled-text: #f8fafc;
+
+  --theme-btn-bg: #e2e8f0;
+  --theme-btn-text: #0f172a;
+
+  /* Canvas 内部颜色 */
+  --canvas-link-high: #64748b;
+  --canvas-link-bottleneck: #dc2626;
+  --canvas-host-fill: #dcfce7;
+  --canvas-host-stroke: #16a34a;
+  --canvas-router-fill: #dbeafe;
+  --canvas-router-stroke: #2563eb;
+  --canvas-node-label: #1f2937;
+  --canvas-packet: #f59e0b;
+  --canvas-packet-text: #ffffff;
+  --canvas-packet-stroke: #ffffff;
+
+  /* 图例颜色 */
+  --legend-host: #16a34a;
+  --legend-router: #2563eb;
+  --legend-bottleneck: #dc2626;
+  --legend-high: #64748b;
+  --legend-packet: #f59e0b;
+}
+
+[data-theme="dark"] {
+  --primary-color: #3b82f6;
+  --bg-color: #0b1220;
+  --panel-bg: #111827;
+  --panel-section-bg: #0f172a;
+  --text-main: #e5e7eb;
+  --text-sub: #94a3b8;
+  --border-color: #334155;
+  --step-bg: rgba(37, 99, 235, 0.18);
+
+  --canvas-bg: #0f172a;
+
+  --legend-bg: rgba(255, 255, 255, 0.08);
+  --legend-text: #e2e8f0;
+  --legend-border: rgba(255, 255, 255, 0.20);
+
+  --btn-secondary: #475569;
+  --disabled-bg: #334155;
+  --disabled-text: #94a3b8;
+
+  --theme-btn-bg: #1f2937;
+  --theme-btn-text: #e5e7eb;
+
+  /* Canvas 内部颜色 */
+  --canvas-link-high: #94a3b8;
+  --canvas-link-bottleneck: #f87171;
+  --canvas-host-fill: #14532d;
+  --canvas-host-stroke: #4ade80;
+  --canvas-router-fill: #1e293b;
+  --canvas-router-stroke: #60a5fa;
+  --canvas-node-label: #e2e8f0;
+  --canvas-packet: #fbbf24;
+  --canvas-packet-text: #111827;
+  --canvas-packet-stroke: rgba(15, 23, 42, 0.45);
+
+  /* 图例颜色 */
+  --legend-host: #4ade80;
+  --legend-router: #60a5fa;
+  --legend-bottleneck: #f87171;
+  --legend-high: #94a3b8;
+  --legend-packet: #fbbf24;
+}
+
+/* ================= 基础样式与布局 ================= */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 标题区 */
+header {
+  padding: 16px 24px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-text {
+  flex: 1;
+}
+
+header h1 {
+  font-size: 20px;
+}
+
+header p {
+  font-size: 13px;
+  color: var(--text-sub);
+  margin-top: 4px;
+}
+
+#btnTheme {
+  background: var(--theme-btn-bg);
+  color: var(--theme-btn-text);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+/* 主内容区 */
+main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* 左侧：拓扑与动画区 */
+.canvas-container {
+  flex: 1;
+  position: relative;
+  background: var(--canvas-bg);
+  display: flex;
+  flex-direction: column;
+}
+
+canvas {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  display: block;
+}
+
+/* 图例区 */
+.legend {
+  padding: 10px 20px;
+  background: var(--legend-bg);
+  color: var(--legend-text);
+  font-size: 12px;
+  display: flex;
+  gap: 20px;
+  border-top: 1px solid var(--legend-border);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.legend-host {
+  background: var(--legend-host);
+}
+
+.legend-router {
+  background: var(--legend-router);
+  border-radius: 50%;
+}
+
+.legend-bottleneck {
+  background: var(--legend-bottleneck);
+}
+
+.legend-high {
+  background: var(--legend-high);
+}
+
+.legend-packet {
+  background: var(--legend-packet);
+  border-radius: 50%;
+}
+
+/* 右侧：控制与信息面板 */
+.sidebar {
+  width: 320px;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.panel-section {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-section-bg);
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: var(--primary-color);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+
+/* 控制面板按钮 */
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+button {
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary-color);
+  color: white;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity 0.2s;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: var(--btn-secondary);
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.speed-control {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+input[type="range"] {
+  flex: 1;
+}
+
+/* 步骤说明区 */
+#step-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-main);
+  background: var(--step-bg);
+  padding: 10px;
+  border-radius: 6px;
+  border-left: 4px solid var(--primary-color);
+  min-height: 60px;
+}
+
+/* 快捷键说明区 */
+.shortcut-list {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+kbd {
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: Consolas, monospace;
+  color: var(--text-main);
+}
+
+/* 信息面板区 */
+#info-content {
+  font-size: 13px;
+  font-family: Consolas, monospace;
+  color: var(--text-sub);
+  line-height: 1.6;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--border-color);
+  padding: 2px 0;
+}
+
+.info-label {
+  font-weight: bold;
+  color: var(--text-main);
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="header-text">
+    <h1>实验：吞吐量与瓶颈链路 (Throughput & Bottleneck Link)</h1>
+    <p>注：此处为简化演示。忽略了传播时延、处理时延与协议头部开销，仅聚焦于链路带宽对端到端吞吐量的限制。</p>
+    <p>快捷键：Space 播放/暂停；S/→ 单步执行；R 重置；T 切换主题。</p>
+  </div>
+  <button id="btnTheme" type="button" aria-label="切换主题">🌙 深色</button>
+</header>
+
+<main>
+  <!-- 网络拓扑与动画区 -->
+  <div class="canvas-container">
+    <canvas id="networkCanvas"></canvas>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-color legend-host"></div> 主机 (Host)</div>
+      <div class="legend-item"><div class="legend-color legend-router"></div> 路由器 (Router)</div>
+      <div class="legend-item"><div class="legend-color legend-bottleneck"></div> 瓶颈链路 (10 Mbps)</div>
+      <div class="legend-item"><div class="legend-color legend-high"></div> 高速链路 (100 Mbps)</div>
+      <div class="legend-item"><div class="legend-color legend-packet"></div> 数据包 (Packet)</div>
+    </div>
+  </div>
+
+  <!-- 右侧面板 -->
+  <div class="sidebar">
+    <!-- 控制面板 -->
+    <div class="panel-section">
+      <div class="panel-title">控制面板</div>
+      <div class="controls">
+        <button id="btnPlay">播放</button>
+        <button id="btnPause" disabled>暂停</button>
+        <button id="btnStep" class="secondary">单步执行</button>
+        <button id="btnReset" class="secondary">重置</button>
+      </div>
+      <div class="speed-control">
+        <span>速度:</span>
+        <input type="range" id="speedSlider" min="0.5" max="3" step="0.5" value="1">
+        <span id="speedVal">1.0x</span>
+      </div>
+    </div>
+
+    <!-- 当前步骤说明区 -->
+    <div class="panel-section">
+      <div class="panel-title">当前步骤说明</div>
+      <div id="step-desc">准备就绪。点击“播放”或“单步执行”开始实验。</div>
+    </div>
+
+    <!-- 快捷键说明区 -->
+    <div class="panel-section">
+      <div class="panel-title">快捷键</div>
+      <div class="shortcut-list">
+        <div><kbd>Space</kbd> 播放 / 暂停</div>
+        <div><kbd>S</kbd> / <kbd>→</kbd> 单步执行</div>
+        <div><kbd>R</kbd> 重置动画</div>
+        <div><kbd>T</kbd> 切换深色 / 浅色主题</div>
+      </div>
+    </div>
+
+    <!-- 信息面板区 -->
+    <div class="panel-section" style="flex:1;">
+      <div class="panel-title">详细信息 (点击节点或数据包)</div>
+      <div id="info-content">
+        <div class="info-row"><span class="info-label">状态</span><span>等待交互</span></div>
+        <div class="info-row"><span class="info-label">提示</span><span>点击拓扑图中的设备或移动中的数据包以查看协议字段。</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/**
+ * =====================================================================
+ * 实验配置与步骤定义 (STEPS ARRAY)
+ * 您可以通过修改此数组来更换实验流程、链路带宽或数据包数量。
+ * =====================================================================
+ */
+const STEPS = [
+  {
+    type: "info",
+    text: "步骤 1/5：初始化拓扑。链路带宽：源->R1 (100Mbps), R1->R2 (10Mbps), R2->目的 (100Mbps)。",
+    highlight: null
+  },
+  {
+    type: "send",
+    text: "步骤 2/5：源主机以 100Mbps 速率发送 3 个数据包。在高速链路上，数据包快速移动。",
+    count: 3,
+    linkIndex: 0,
+    speed: 1.5 // 相对速度因子，体现 100Mbps
+  },
+  {
+    type: "traverse",
+    text: "步骤 3/5：数据包到达路由器 A。进入 10Mbps 瓶颈链路。注意观察移动速度显著变慢。",
+    linkIndex: 1,
+    speed: 0.15 // 相对速度因子，体现 10Mbps 瓶颈
+  },
+  {
+    type: "traverse",
+    text: "步骤 4/5：数据包离开瓶颈链路，进入目的主机前的高速链路，恢复快速移动。",
+    linkIndex: 2,
+    speed: 1.5
+  },
+  {
+    type: "conclude",
+    text: "步骤 5/5：实验结论。端到端吞吐量受限于瓶颈链路。吞吐量 = min(100, 10, 100) = 10 Mbps。",
+    highlight: 1
+  }
+];
+
+/**
+ * 网络拓扑配置
+ */
+const TOPOLOGY = {
+  nodes: [
+    { id: "src", type: "host", label: "源主机", x: 0.1, y: 0.5 },
+    { id: "r1",  type: "router", label: "路由器 A", x: 0.35, y: 0.5 },
+    { id: "r2",  type: "router", label: "路由器 B", x: 0.65, y: 0.5 },
+    { id: "dst", type: "host", label: "目的主机", x: 0.9, y: 0.5 }
+  ],
+  links: [
+    { id: 0, from: "src", to: "r1", bandwidth: "100 Mbps", kind: "high" },
+    { id: 1, from: "r1", to: "r2", bandwidth: "10 Mbps", kind: "bottleneck" },
+    { id: 2, from: "r2", to: "dst", bandwidth: "100 Mbps", kind: "high" }
+  ]
+};
+
+/**
+ * =====================================================================
+ * 核心逻辑与状态管理
+ * =====================================================================
+ */
+const canvas = document.getElementById('networkCanvas');
+const ctx = canvas.getContext('2d');
+const infoContent = document.getElementById('info-content');
+const stepDesc = document.getElementById('step-desc');
+
+// 按钮引用
+const btnPlay = document.getElementById('btnPlay');
+const btnPause = document.getElementById('btnPause');
+const btnStep = document.getElementById('btnStep');
+const btnReset = document.getElementById('btnReset');
+const btnTheme = document.getElementById('btnTheme');
+
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+
+// 全局状态
+let state = {
+  currentStepIndex: -1,
+  isPlaying: false,
+  isAnimating: false,
+  running: false,
+  globalSpeed: 1.0,
+  packets: [],
+  lastTime: 0,
+  autoTimer: null
+};
+
+// 数据包类
+class Packet {
+  constructor(id, linkIndex, speedFactor) {
+    this.id = id;
+    this.seq = id;
+    this.size = "1500 Bytes";
+    this.src = "192.168.1.10";
+    this.dst = "203.0.113.5";
+    this.linkIndex = linkIndex;
+    this.progress = 0; // 0 到 1
+    this.speedFactor = speedFactor;
+    this.isDone = false;
+  }
+}
+
+function clearAutoTimer() {
+  if (state.autoTimer) {
+    clearTimeout(state.autoTimer);
+    state.autoTimer = null;
+  }
+}
+
+/**
+ * 调整 Canvas 尺寸以适配窗口
+ */
+function resizeCanvas() {
+  canvas.width = canvas.parentElement.clientWidth;
+  canvas.height = canvas.parentElement.clientHeight - document.querySelector('.legend').offsetHeight;
+}
+
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+/**
+ * 获取节点在 Canvas 上的实际坐标
+ */
+function getNodeCoords(nodeId) {
+  const node = TOPOLOGY.nodes.find(n => n.id === nodeId);
+  return {
+    x: node.x * canvas.width,
+    y: node.y * canvas.height
+  };
+}
+
+/**
+ * Canvas 颜色缓存，会随主题变化刷新
+ */
+let canvasColors = {};
+
+/**
+ * =====================================================================
+ * 渲染逻辑
+ * =====================================================================
+ */
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 1. 绘制链路
+  TOPOLOGY.links.forEach(link => {
+    const from = getNodeCoords(link.from);
+    const to = getNodeCoords(link.to);
+
+    const linkColor = link.kind === 'bottleneck'
+      ? canvasColors.linkBottleneck
+      : canvasColors.linkHigh;
+
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.strokeStyle = linkColor;
+    ctx.lineWidth = link.kind === 'bottleneck' ? 6 : 3;
+    ctx.stroke();
+
+    // 绘制带宽标签
+    const midX = (from.x + to.x) / 2;
+    const midY = (from.y + to.y) / 2 - 10;
+    ctx.fillStyle = linkColor;
+    ctx.font = "12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(link.bandwidth, midX, midY);
+  });
+
+  // 2. 绘制节点
+  TOPOLOGY.nodes.forEach(node => {
+    const { x, y } = getNodeCoords(node.id);
+
+    ctx.beginPath();
+
+    if (node.type === 'host') {
+      ctx.rect(x - 15, y - 15, 30, 30);
+      ctx.fillStyle = canvasColors.hostFill;
+      ctx.strokeStyle = canvasColors.hostStroke;
+    } else {
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.fillStyle = canvasColors.routerFill;
+      ctx.strokeStyle = canvasColors.routerStroke;
+    }
+
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 节点标签
+    ctx.fillStyle = canvasColors.nodeLabel;
+    ctx.font = "12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(node.label, x, y + 30);
+  });
+
+  // 3. 绘制数据包
+  state.packets.forEach(pkt => {
+    if (pkt.isDone || pkt.progress < 0) return;
+
+    const link = TOPOLOGY.links[pkt.linkIndex];
+    const from = getNodeCoords(link.from);
+    const to = getNodeCoords(link.to);
+
+    const x = from.x + (to.x - from.x) * pkt.progress;
+    const y = from.y + (to.y - from.y) * pkt.progress;
+
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = canvasColors.packet;
+    ctx.fill();
+    ctx.strokeStyle = canvasColors.packetStroke;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 数据包标签 (简化演示：显示 Seq)
+    ctx.fillStyle = canvasColors.packetText;
+    ctx.font = "10px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(pkt.seq, x, y + 3);
+  });
+}
+
+/**
+ * =====================================================================
+ * 主题切换逻辑
+ * =====================================================================
+ */
+function readCanvasColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const value = name => cs.getPropertyValue(name).trim();
+
+  return {
+    linkHigh: value('--canvas-link-high'),
+    linkBottleneck: value('--canvas-link-bottleneck'),
+    hostFill: value('--canvas-host-fill'),
+    hostStroke: value('--canvas-host-stroke'),
+    routerFill: value('--canvas-router-fill'),
+    routerStroke: value('--canvas-router-stroke'),
+    nodeLabel: value('--canvas-node-label'),
+    packet: value('--canvas-packet'),
+    packetText: value('--canvas-packet-text'),
+    packetStroke: value('--canvas-packet-stroke')
+  };
+}
+
+function getTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'light';
+}
+
+function updateThemeButton() {
+  const theme = getTheme();
+
+  if (theme === 'dark') {
+    btnTheme.textContent = '☀️ 浅色';
+    btnTheme.title = '切换到浅色主题';
+  } else {
+    btnTheme.textContent = '🌙 深色';
+    btnTheme.title = '切换到深色主题';
+  }
+
+  btnTheme.setAttribute('aria-label', btnTheme.title);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+
+  try {
+    localStorage.setItem('net-demo-theme', theme);
+  } catch (e) {
+    // localStorage 不可用时不影响主题切换本身
+  }
+
+  updateThemeButton();
+  canvasColors = readCanvasColors();
+  draw();
+}
+
+function toggleTheme() {
+  applyTheme(getTheme() === 'dark' ? 'light' : 'dark');
+}
+
+function initTheme() {
+  let saved = null;
+
+  try {
+    saved = localStorage.getItem('net-demo-theme');
+  } catch (e) {
+    saved = null;
+  }
+
+  if (saved === 'dark' || saved === 'light') {
+    applyTheme(saved);
+  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    applyTheme('dark');
+  } else {
+    applyTheme('light');
+  }
+}
+
+/**
+ * =====================================================================
+ * 动画与步骤执行逻辑
+ * =====================================================================
+ */
+function updateButtons() {
+  btnPlay.disabled = state.running || state.isPlaying;
+  btnPause.disabled = !(state.running || state.isPlaying);
+  btnStep.disabled = state.running;
+  btnReset.disabled = false;
+}
+
+function finishStep() {
+  state.isAnimating = false;
+  state.running = false;
+
+  if (state.isPlaying) {
+    if (state.currentStepIndex < STEPS.length - 1) {
+      clearAutoTimer();
+      state.autoTimer = setTimeout(nextStep, 500);
+    } else {
+      state.isPlaying = false;
+    }
+  }
+
+  updateButtons();
+}
+
+function executeStep(index) {
+  if (index < 0 || index >= STEPS.length) return;
+
+  clearAutoTimer();
+
+  state.currentStepIndex = index;
+  const step = STEPS[index];
+
+  // 更新步骤说明区
+  stepDesc.textContent = step.text;
+
+  // 根据步骤类型初始化状态
+  if (step.type === 'send') {
+    state.packets = [];
+
+    for (let i = 1; i <= step.count; i++) {
+      // 简化演示：数据包依次进入链路，此处为简化处理为同时进入但错开初始进度
+      const pkt = new Packet(i, step.linkIndex, step.speed);
+      pkt.progress = -(i - 1) * 0.2; // 错开位置，模拟连续发送
+      state.packets.push(pkt);
+    }
+
+    state.isAnimating = true;
+    state.running = true;
+  } else if (step.type === 'traverse') {
+    // 将现有数据包移动到下一链路
+    state.packets.forEach(pkt => {
+      pkt.linkIndex = step.linkIndex;
+      pkt.speedFactor = step.speed;
+      pkt.progress = 0;
+      pkt.isDone = false;
+    });
+
+    state.isAnimating = true;
+    state.running = true;
+  } else {
+    // info 或 conclude 步骤
+    state.isAnimating = false;
+    state.running = false;
+    finishStep();
+    return;
+  }
+
+  updateButtons();
+}
+
+function nextStep() {
+  clearAutoTimer();
+
+  if (state.currentStepIndex < STEPS.length - 1) {
+    executeStep(state.currentStepIndex + 1);
+  } else {
+    state.isPlaying = false;
+    state.running = false;
+    updateButtons();
+  }
+}
+
+function startPlayback() {
+  clearAutoTimer();
+
+  if (state.currentStepIndex === -1 || state.currentStepIndex >= STEPS.length - 1) {
+    resetExperiment();
+  }
+
+  state.isPlaying = true;
+
+  // 如果此前是在单步或暂停状态中未完成当前动画，则恢复当前动画
+  if (state.isAnimating) {
+    state.running = true;
+  } else {
+    nextStep();
+  }
+
+  updateButtons();
+}
+
+function pauseExperiment() {
+  clearAutoTimer();
+  state.isPlaying = false;
+  state.running = false;
+  updateButtons();
+}
+
+function togglePlayPause() {
+  if (state.running || state.isPlaying) {
+    pauseExperiment();
+  } else {
+    startPlayback();
+  }
+}
+
+function stepExperiment() {
+  clearAutoTimer();
+  state.isPlaying = false;
+
+  // 如果当前步骤动画尚未完成，则继续完成当前步骤，而不是跳到下一步
+  if (state.isAnimating) {
+    state.running = true;
+    updateButtons();
+    return;
+  }
+
+  if (state.currentStepIndex === -1 || state.currentStepIndex >= STEPS.length - 1) {
+    resetExperiment();
+  }
+
+  nextStep();
+}
+
+function resetExperiment() {
+  clearAutoTimer();
+
+  state.currentStepIndex = -1;
+  state.isPlaying = false;
+  state.isAnimating = false;
+  state.running = false;
+  state.packets = [];
+  state.lastTime = 0;
+
+  stepDesc.textContent = "准备就绪。点击“播放”或“单步执行”开始实验。";
+  infoContent.innerHTML = `
+    <div class="info-row"><span class="info-label">状态</span><span>等待交互</span></div>
+    <div class="info-row"><span class="info-label">提示</span><span>点击拓扑图中的设备或移动中的数据包以查看协议字段。</span></div>
+  `;
+
+  updateButtons();
+  draw();
+}
+
+function update(timestamp) {
+  if (!state.lastTime) state.lastTime = timestamp;
+
+  // 限制最大 dt，避免切换标签页后返回时动画跳变过大
+  const dt = Math.min((timestamp - state.lastTime) / 1000, 0.1);
+  state.lastTime = timestamp;
+
+  if (state.isAnimating && state.running) {
+    const step = STEPS[state.currentStepIndex];
+    let allDone = true;
+
+    if (step && (step.type === 'send' || step.type === 'traverse')) {
+      state.packets.forEach(pkt => {
+        if (!pkt.isDone && pkt.linkIndex === step.linkIndex) {
+          // 根据链路速度因子和全局速度更新进度
+          pkt.progress += dt * pkt.speedFactor * state.globalSpeed * 0.5;
+
+          if (pkt.progress >= 1) {
+            pkt.progress = 1;
+            pkt.isDone = true;
+          } else {
+            allDone = false;
+          }
+        } else if (!pkt.isDone) {
+          allDone = false;
+        }
+      });
+
+      if (allDone) {
+        finishStep();
+      }
+    } else {
+      // 非动画步骤直接完成
+      finishStep();
+    }
+  }
+
+  draw();
+  requestAnimationFrame(update);
+}
+
+/**
+ * =====================================================================
+ * 交互控制逻辑
+ * =====================================================================
+ */
+btnPlay.addEventListener('click', () => {
+  startPlayback();
+  btnPlay.blur();
+});
+
+btnPause.addEventListener('click', () => {
+  pauseExperiment();
+  btnPause.blur();
+});
+
+btnStep.addEventListener('click', () => {
+  stepExperiment();
+  btnStep.blur();
+});
+
+btnReset.addEventListener('click', () => {
+  resetExperiment();
+  btnReset.blur();
+});
+
+btnTheme.addEventListener('click', () => {
+  toggleTheme();
+  btnTheme.blur();
+});
+
+speedSlider.addEventListener('input', (e) => {
+  state.globalSpeed = parseFloat(e.target.value);
+  speedVal.textContent = state.globalSpeed.toFixed(1) + 'x';
+});
+
+/**
+ * 快捷键：
+ * Space 播放/暂停
+ * S / ArrowRight 单步执行
+ * R 重置
+ * T 切换主题
+ */
+document.addEventListener('keydown', (event) => {
+  // 忽略组合键，避免劫持浏览器默认快捷键，例如 Ctrl+R、Ctrl+S
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  // 忽略输入法组合输入阶段
+  if (event.isComposing) return;
+
+  // 忽略长按重复触发，避免快捷键连续触发
+  if (event.repeat) return;
+
+  const target = event.target;
+
+  if (target) {
+    const tagName = target.tagName;
+
+    // 文本输入框、下拉框等聚焦时不拦截快捷键
+    if (
+      tagName === 'TEXTAREA' ||
+      tagName === 'SELECT' ||
+      (tagName === 'INPUT' && target.type !== 'range')
+    ) {
+      return;
+    }
+
+    if (target.isContentEditable) return;
+
+    // 当焦点在速度滑块上时，保留左右方向键调整速度的默认行为
+    if (target === speedSlider && (event.code === 'ArrowRight' || event.code === 'ArrowLeft')) {
+      return;
+    }
+  }
+
+  switch (event.code) {
+    case 'Space':
+      event.preventDefault();
+      togglePlayPause();
+      break;
+
+    case 'KeyS':
+    case 'ArrowRight':
+      event.preventDefault();
+      stepExperiment();
+      break;
+
+    case 'KeyR':
+      event.preventDefault();
+      resetExperiment();
+      break;
+
+    case 'KeyT':
+      event.preventDefault();
+      toggleTheme();
+      break;
+
+    default:
+      break;
+  }
+});
+
+// 启动主题、动画循环与初始状态
+initTheme();
+requestAnimationFrame(update);
+resetExperiment();
+</script>
+</body>
+</html>

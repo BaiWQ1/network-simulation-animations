@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="计算机网络教学演示：浏览器与服务器之间的 HTTP 报文与 Cookie 交互动画">
+<title>HTTP 报文与 Cookie 交互动画 · 计算机网络实验演示</title>
+
+<!-- ============================================================
+  初始主题：在首帧渲染前读取 localStorage；无记录则跟随系统。
+  放在 <head> 最前，避免浅色→深色闪烁（FOUC）。
+============================================================ -->
+<script>
+(function () {
+  var THEME_KEY = 'netlab-http-cookie-theme';
+  var theme = 'light';
+  try {
+    var saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') { theme = saved; }
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) { theme = 'dark'; }
+  } catch (e) { /* localStorage 不可用时退回浅色 */ }
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
+
+<style>
+/* ============================================================
+   1. 设计令牌：所有颜色【集中】定义在此处的两套主题变量中。
+      组件样式中禁止出现硬编码颜色，只允许引用 var(--xxx)。
+   ============================================================ */
+:root {
+  --radius: 14px;
+  --radius-sm: 9px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+/* ---------- 浅色主题 ---------- */
+:root, :root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef1f6;            --surface: #ffffff;
+  --surface-2: #f2f5fa;     --border: #d8e0ec;
+  --text: #182233;          --text-muted: #4c5a72;
+  --accent: #1d4ed8;        --accent-hover: #1e40af;   --on-accent: #ffffff;
+  --btn-bg: #ffffff;        --btn-bg-hover: #eaeffc;
+  --btn-border: #c7d2e4;    --btn-text: #1f2b40;
+  /* 语义色：请求=蓝 / 响应=青绿 / TCP=紫 / 内部动作=琥珀（两主题语义一致） */
+  --clr-req: #1d4ed8;   --on-req: #ffffff;
+  --clr-resp: #0f766e;  --on-resp: #ffffff;
+  --clr-tcp: #6d28d9;   --on-tcp: #ffffff;
+  --clr-act: #b45309;   --on-act: #ffffff;
+  /* 节点状态：绿=工作中 / 黄=等待 / 红=错误 */
+  --clr-ok: #15803d;    --on-ok: #ffffff;
+  --clr-wait: #854d0e;  --clr-err: #dc2626;
+  --dot-busy: #22c55e;  --dot-wait: #f59e0b;  --dot-err: #ef4444;
+  /* 场景图形 */
+  --guide: #b9c5d8;     --lifeline: #9aa8bd;
+  --node-fill: #f8fafc; --node-border: #c2cede;
+  /* 提示条 */
+  --note-bg: #fdf4d8;   --note-border: #ecd393;  --note-text: #7a4d05;
+  --flash-ring: rgba(29, 78, 216, .40);
+  --shadow: 0 4px 16px rgba(24, 34, 51, .07);
+}
+
+/* ---------- 深色主题 ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1322;            --surface: #161e31;
+  --surface-2: #1d2740;     --border: #2c3a5c;
+  --text: #e9edf7;          --text-muted: #a5b2ca;
+  --accent: #60a5fa;        --accent-hover: #93c5fd;   --on-accent: #0a1526;
+  --btn-bg: #1d2740;        --btn-bg-hover: #263354;
+  --btn-border: #3a4c78;    --btn-text: #e9edf7;
+  /* 语义不变，仅提高明度以适配深底；文字改用深色保证 ≥4.5:1 */
+  --clr-req: #93c5fd;   --on-req: #0b1526;
+  --clr-resp: #5eead4;  --on-resp: #062d26;
+  --clr-tcp: #c4b5fd;   --on-tcp: #251348;
+  --clr-act: #fcd34d;   --on-act: #362506;
+  --clr-ok: #4ade80;    --on-ok: #05301a;
+  --clr-wait: #facc15;  --clr-err: #f87171;
+  --dot-busy: #4ade80;  --dot-wait: #fbbf24;  --dot-err: #f87171;
+  --guide: #3c4d75;     --lifeline: #5b6c93;
+  --node-fill: #1a2440; --node-border: #3a4c78;
+  --note-bg: #33280d;   --note-border: #6b5316;  --note-text: #fcd34d;
+  --flash-ring: rgba(147, 197, 253, .50);
+  --shadow: 0 4px 18px rgba(0, 0, 0, .45);
+}
+
+/* ============================================================
+   2. 基础样式与主题切换过渡
+   ============================================================ */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+}
+::selection { background: var(--accent); color: var(--on-accent); }
+
+/* 主题切换平滑过渡（仅过渡颜色类属性，不影响位移/透明度动画） */
+body, .card, .btn, .chip, .tag, .cookie-chip, .note, th, td, code, kbd,
+.log-row, .store-card, .progress-track, #stepNo, details, summary,
+svg rect, svg line, svg polygon, svg circle, svg text {
+  transition: background-color .35s ease, color .35s ease,
+              border-color .35s ease, fill .35s ease,
+              stroke .35s ease, box-shadow .35s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+.app { max-width: 1240px; margin: 0 auto; padding: 20px 22px 42px; }
+
+/* ---------- 标题区 ---------- */
+.app-header {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.app-header h1 { margin: 0; font-size: 21px; letter-spacing: .3px; }
+.subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
+.header-actions { display: flex; gap: 10px; align-items: center; }
+
+/* ---------- 布局 ---------- */
+.layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 16px; align-items: start;
+}
+.col-main, .col-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (max-width: 1020px) { .layout { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px;
+}
+.card > h2 {
+  margin: 0 0 12px; font-size: 13px; letter-spacing: .5px;
+  color: var(--text-muted); display: flex; align-items: center; gap: 6px;
+}
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; font-size: 13px; color: var(--text-muted); }
+
+/* ============================================================
+   3. 按钮 / 控制面板
+   ============================================================ */
+.btn {
+  appearance: none; border: 1px solid var(--btn-border);
+  background: var(--btn-bg); color: var(--btn-text);
+  border-radius: var(--radius-sm); padding: 8px 14px;
+  font-size: 13.5px; font-family: inherit; line-height: 1;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover:not(:disabled) { background: var(--btn-bg-hover); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.controls-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.speed-box { display: flex; align-items: center; gap: 8px; margin-left: 6px; color: var(--text-muted); font-size: 13px; }
+.speed-box input[type="range"] { width: 140px; accent-color: var(--accent); }
+#speedVal { min-width: 40px; font-variant-numeric: tabular-nums; color: var(--text); }
+.progress-wrap { display: flex; align-items: center; gap: 10px; margin-top: 13px; }
+.progress-track { flex: 1; height: 8px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+#progressFill { height: 100%; width: 0%; background: var(--accent); border-radius: 99px; transition: width .2s linear; }
+#progressText { font-size: 12.5px; color: var(--text-muted); min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   4. 场景区（SVG 时序图）
+   ============================================================ */
+.scene-card { padding: 14px 16px 16px; }
+#scene { width: 100%; height: auto; display: block; }
+svg text { font-family: var(--font); }
+
+.lifeline { stroke: var(--lifeline); stroke-width: 1.5; stroke-dasharray: 3 6; stroke-linecap: round; }
+
+.node { cursor: pointer; }
+.node-box { fill: var(--node-fill); stroke: var(--node-border); stroke-width: 1.5; }
+.node:hover .node-box { stroke: var(--accent); }
+.node.selected .node-box { stroke: var(--accent); stroke-width: 2.5; }
+.node-title { fill: var(--text); font-size: 16px; font-weight: 700; }
+.node-sub { fill: var(--text-muted); font-size: 11.5px; }
+.status-label { fill: var(--text-muted); font-size: 11.5px; }
+.status-dot.st-busy { fill: var(--dot-busy); }
+.status-dot.st-wait { fill: var(--dot-wait); }
+.status-dot.st-err  { fill: var(--dot-err); }
+
+.msg { cursor: pointer; opacity: .35; }              /* 未到达的步骤淡化预览 */
+.msg.active, .msg.done, .msg.selected { opacity: 1; }
+.arrow-guide { stroke: var(--guide); stroke-width: 1.4; stroke-dasharray: 5 5; }
+.arrow-progress { stroke-width: 2.6; stroke-linecap: round; }
+.msg-label { fill: var(--text-muted); font-size: 12px; }
+.msg.active .msg-label, .msg.selected .msg-label { fill: var(--text); font-weight: 600; }
+.kind-tcp  .arrow-progress { stroke: var(--clr-tcp); }   .kind-tcp  .arrow-head { fill: var(--clr-tcp); }
+.kind-req  .arrow-progress { stroke: var(--clr-req); }   .kind-req  .arrow-head { fill: var(--clr-req); }
+.kind-resp .arrow-progress { stroke: var(--clr-resp); }  .kind-resp .arrow-head { fill: var(--clr-resp); }
+.msg.selected .arrow-progress { stroke-width: 4; }
+
+.packet { cursor: pointer; }
+.packet text { pointer-events: none; }
+.pk-kind  { font-size: 9.5px; letter-spacing: 1.5px; opacity: .85; }
+.pk-label { font-size: 13px; font-weight: 700; }
+.packet.kind-tcp  rect { fill: var(--clr-tcp); }   .packet.kind-tcp  text { fill: var(--on-tcp); }
+.packet.kind-req  rect { fill: var(--clr-req); }   .packet.kind-req  text { fill: var(--on-req); }
+.packet.kind-resp rect { fill: var(--clr-resp); }  .packet.kind-resp text { fill: var(--on-resp); }
+.packet.selected rect { stroke: var(--text); stroke-width: 2.5; }
+
+.act { opacity: .35; }
+.act.active, .act.done { opacity: 1; }
+.act-box { fill: var(--clr-act); fill-opacity: .3; stroke: var(--clr-act); stroke-width: 1.4; }
+.act.active .act-box { animation: actPulse 1s ease-in-out infinite; }
+.act-label { fill: var(--text); font-size: 12.5px; }
+.act.active .act-label { font-weight: 600; }
+@keyframes actPulse { 0%, 100% { fill-opacity: .18; } 50% { fill-opacity: .55; } }
+
+.end-pill { fill: var(--surface-2); stroke: var(--clr-ok); stroke-width: 1.5; }
+.end-text { fill: var(--text); font-size: 12.5px; font-weight: 600; }
+
+/* 节点下方的两个存储状态卡 */
+.stores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+@media (max-width: 640px) { .stores { grid-template-columns: 1fr; } }
+.store-card { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface-2); }
+.store-card h3 { margin: 0 0 8px; font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+.store-empty { color: var(--text-muted); font-size: 12.5px; }
+.cookie-chip { display: inline-flex; padding: 4px 10px; border-radius: 99px; background: var(--clr-act); color: var(--on-act); font-family: var(--mono); font-size: 12px; }
+.session-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; flex-wrap: wrap; }
+.session-row code { font-family: var(--mono); background: var(--surface); border: 1px solid var(--border); padding: 2px 6px; border-radius: 6px; }
+.tag { padding: 2px 8px; border-radius: 99px; font-size: 11.5px; }
+.tag-new { border: 1px solid var(--clr-wait); color: var(--clr-wait); background: var(--surface); }
+.tag-ok { background: var(--clr-ok); color: var(--on-ok); }
+.store-card.flash { animation: flashCard 1s ease; }
+@keyframes flashCard { 0% { box-shadow: 0 0 0 3px var(--flash-ring); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* ============================================================
+   5. 步骤说明区
+   ============================================================ */
+.step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+#stepNo { font-size: 12px; color: var(--text-muted); border: 1px solid var(--border); padding: 3px 9px; border-radius: 99px; background: var(--surface-2); font-variant-numeric: tabular-nums; }
+#stepTitle { margin: 0; font-size: 17px; }
+#stepDesc { margin: 0; line-height: 1.75; font-size: 14px; }
+.note { margin: 10px 0 0; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--note-bg); border: 1px solid var(--note-border); color: var(--note-text); font-size: 13px; line-height: 1.6; }
+
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+.chip.done { color: var(--clr-ok); border-color: var(--clr-ok); }
+.chip.kind-tcp  { background: var(--clr-tcp);  border-color: var(--clr-tcp);  color: var(--on-tcp); }
+.chip.kind-req  { background: var(--clr-req);  border-color: var(--clr-req);  color: var(--on-req); }
+.chip.kind-resp { background: var(--clr-resp); border-color: var(--clr-resp); color: var(--on-resp); }
+.chip.kind-act, .chip.kind-end { background: var(--clr-act); border-color: var(--clr-act); color: var(--on-act); }
+
+/* ============================================================
+   6. 信息面板 / 消息记录 / 图例
+   ============================================================ */
+#infoBody { font-size: 13.5px; line-height: 1.7; }
+.info-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.info-head h3 { margin: 0; font-size: 14.5px; }
+.info-dir { color: var(--text-muted); font-size: 12.5px; margin: 2px 0 10px; }
+table.fields { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+.fields th { width: 96px; text-align: left; color: var(--text-muted); font-weight: 600; vertical-align: top; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); }
+.fields td { padding: 6px 0; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12.3px; word-break: break-all; }
+.mini-note { font-family: var(--font); font-size: 11px; color: var(--note-text); background: var(--note-bg); border: 1px solid var(--note-border); padding: 1px 6px; border-radius: 99px; cursor: help; white-space: nowrap; }
+.hint-list { margin: 8px 0 0; padding-left: 18px; color: var(--text-muted); }
+.hint-list li { margin: 4px 0; }
+
+#msgLog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 250px; overflow: auto; }
+.log-empty { color: var(--text-muted); font-size: 12.5px; padding: 4px; }
+.log-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; font-size: 12.5px; opacity: .55; }
+.log-row.active, .log-row.done { opacity: 1; }
+.log-row.active { border-color: var(--accent); }
+.log-row:hover { border-color: var(--accent); }
+.log-dot { width: 9px; height: 9px; border-radius: 99px; flex: none; background: var(--guide); }
+.kind-tcp  .log-dot { background: var(--clr-tcp); }
+.kind-req  .log-dot { background: var(--clr-req); }
+.kind-resp .log-dot { background: var(--clr-resp); }
+.kind-tcp .log-dir { color: var(--clr-tcp); } .kind-req .log-dir { color: var(--clr-req); } .kind-resp .log-dir { color: var(--clr-resp); }
+.log-dir { font-weight: 700; flex: none; }
+.log-no { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 99px; padding: 1px 6px; background: var(--surface); flex: none; }
+.log-main { display: flex; flex-direction: column; line-height: 1.35; min-width: 0; }
+.log-main small { color: var(--text-muted); font-size: 11px; }
+
+.legend { display: flex; flex-direction: column; gap: 9px; font-size: 12.8px; color: var(--text-muted); }
+.legend-row { display: flex; align-items: center; gap: 9px; }
+.swatch { width: 26px; height: 10px; border-radius: 5px; flex: none; }
+.swatch.kind-req  { background: var(--clr-req); }
+.swatch.kind-resp { background: var(--clr-resp); }
+.swatch.kind-tcp  { background: var(--clr-tcp); }
+.swatch.kind-act  { background: var(--clr-act); }
+.ldot { width: 11px; height: 11px; border-radius: 99px; flex: none; margin: 0 8px 0 8px; }
+.ldot.st-busy { background: var(--dot-busy); }
+.ldot.st-wait { background: var(--dot-wait); }
+.ldot.st-err  { background: var(--dot-err); }
+.legend-note { margin: 6px 0 0; font-size: 11.5px; }
+
+/* ============================================================
+   7. 页脚
+   ============================================================ */
+.app-footer { margin-top: 18px; color: var(--text-muted); font-size: 12.5px; line-height: 1.8; }
+.app-footer details { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; }
+.app-footer summary { cursor: pointer; font-weight: 600; color: var(--text); }
+.app-footer ul { margin: 8px 0 4px; padding-left: 20px; }
+kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-family: var(--mono); font-size: 11.5px; }
+.kbd-hint { margin-top: 10px; }
+</style>
+</head>
+
+<body>
+<div class="app">
+
+  <!-- ==================== 标题区（右上角：主题切换） ==================== -->
+  <header class="app-header">
+    <div>
+      <h1>🌐 HTTP 报文与 Cookie 交互动画演示</h1>
+      <p class="subtitle">计算机网络教学实验 · 浏览器 ⇄ 服务器时序图 · 可播放 / 暂停 / 单步</p>
+    </div>
+    <div class="header-actions">
+      <button id="btnTheme" class="btn" type="button" aria-label="切换主题">
+        <span id="themeIcon" aria-hidden="true">🌙</span>
+        <span id="themeLabel">切换到深色</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ==================== 左列：场景 + 控制 + 步骤说明 ==================== -->
+    <section class="col-main">
+
+      <!-- 实验场景区 -->
+      <div class="card scene-card">
+        <div class="card-head">
+          <h2>🧪 实验场景：访问 shop.example.com</h2>
+          <span id="phaseChip" class="chip">准备中</span>
+        </div>
+
+        <svg id="scene" role="img" aria-label="浏览器与服务器交互时序图"></svg>
+
+        <!-- 状态同步：Cookie 存储 / 会话表 -->
+        <div class="stores">
+          <div class="store-card" id="cookieStoreCard">
+            <h3>🍪 浏览器 · Cookie 存储（shop.example.com）</h3>
+            <div id="cookieList"><span class="store-empty">（空 — 尚无任何 Cookie）</span></div>
+          </div>
+          <div class="store-card" id="sessionStoreCard">
+            <h3>🗄️ 服务器 · 会话表（Session Table）</h3>
+            <div id="sessionList"><span class="store-empty">（空 — 尚无会话）</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 控制面板区 -->
+      <div class="card">
+        <h2>🎛️ 控制面板</h2>
+        <div class="controls-row">
+          <button id="btnPlay"  class="btn btn-primary" type="button" title="快捷键：空格">▶ 播放</button>
+          <button id="btnPause" class="btn" type="button" title="快捷键：空格">⏸ 暂停</button>
+          <button id="btnStep"  class="btn" type="button" title="快捷键：S 或 →">⏭ 单步执行</button>
+          <button id="btnReset" class="btn" type="button" title="快捷键：R">↺ 重置</button>
+          <label class="speed-box">速度
+            <input type="range" id="speedRange" min="0.5" max="3" step="0.25" value="1" aria-label="播放速度">
+            <span id="speedVal">1×</span>
+          </label>
+        </div>
+        <div class="progress-wrap" aria-hidden="true">
+          <div class="progress-track"><div id="progressFill"></div></div>
+          <span id="progressText">0%</span>
+        </div>
+      </div>
+
+      <!-- 当前步骤说明区 -->
+      <div class="card" aria-live="polite">
+        <h2>📖 当前步骤说明</h2>
+        <div class="step-head">
+          <span id="stepNo">未开始</span>
+          <h3 id="stepTitle">准备就绪</h3>
+        </div>
+        <p id="stepDesc"></p>
+        <p id="stepNote" class="note" hidden></p>
+      </div>
+    </section>
+
+    <!-- ==================== 右列：信息面板 + 消息记录 + 图例 ==================== -->
+    <aside class="col-side">
+      <div class="card">
+        <h2>🔍 详细信息面板</h2>
+        <div id="infoBody"></div>
+      </div>
+
+      <div class="card">
+        <h2>📨 消息记录（点击回看字段）</h2>
+        <ol id="msgLog"><li class="log-empty">（暂无消息 — 点击"播放"开始）</li></ol>
+      </div>
+
+      <div class="card">
+        <h2>🎨 图例</h2>
+        <div class="legend">
+          <div class="legend-row"><span class="swatch kind-tcp"></span>TCP 报文（传输层 · 三次握手）</div>
+          <div class="legend-row"><span class="swatch kind-req"></span>HTTP 请求（浏览器 → 服务器）</div>
+          <div class="legend-row"><span class="swatch kind-resp"></span>HTTP 响应（服务器 → 浏览器）</div>
+          <div class="legend-row"><span class="swatch kind-act"></span>主机内部动作 / 用户动作</div>
+          <div class="legend-row"><span class="ldot st-busy"></span>节点状态：工作中（发送 / 处理）</div>
+          <div class="legend-row"><span class="ldot st-wait"></span>节点状态：等待 / 空闲</div>
+          <div class="legend-row"><span class="ldot st-err"></span>节点状态：错误（本演示未触发，语义保留）</div>
+          <p class="legend-note">深 / 浅主题下颜色语义保持一致，仅调整明度与饱和度以适配背景。</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ==================== 页脚：简化说明 + 快捷键 ==================== -->
+  <footer class="app-footer">
+    <details>
+      <summary>⚠️ 简化演示说明（点击展开）</summary>
+      <ul>
+        <li>未展示 DNS 解析、ARP 等前置步骤，假定域名已解析为 IP。</li>
+        <li>使用明文 HTTP 以便观察报文首部；实际网站普遍使用 HTTPS（TLS 加密后首部不可见）。</li>
+        <li>TCP 初始序号 ISN 简化为固定值 0（实际为随机数）；窗口大小、MSS 等字段省略。</li>
+        <li>HTTP 首部字段为典型示例值，并非真实浏览器抓包结果。</li>
+        <li>Cookie 属性仅演示 Path 与 HttpOnly；Expires / Max-Age / Secure / SameSite 未展示。</li>
+        <li>未演示 TCP 连接释放（FIN 四次挥手）；keep-alive 下连接将被复用。</li>
+      </ul>
+    </details>
+    <p class="kbd-hint">快捷键：<kbd>空格</kbd> 播放 / 暂停 · <kbd>S</kbd> 或 <kbd>→</kbd> 单步执行 · <kbd>R</kbd> 重置 · <kbd>T</kbd> 切换主题</p>
+  </footer>
+</div>
+
+<noscript><p style="text-align:center">本页面需要启用 JavaScript 才能运行动画。</p></noscript>
+
+<script>
+(function () {
+'use strict';
+
+/* ============================================================
+   一、实验步骤数据（动画完全由本数组驱动）
+   ------------------------------------------------------------
+   修改本数组即可更换实验流程：
+   · kind : tcp | req | resp（产生移动数据包）/ act（主机内部动作）/ end（总结）
+   · dir  : b2s（浏览器→服务器）或 s2b；act / end 无 dir
+   · actor: act / end 的动作主体（browser / server）
+   · fields: 信息面板中展示的协议字段；s 属性填写简化原因（页面显示"⚠ 简化"）
+   · fx.start: 步骤开始时两端状态 [ 'busy'|'wait'|'err', 状态文字 ]
+   · fx.done : 步骤结束时的存储变更（cookieAdd / sessionAdd / sessionChecked）
+   ============================================================ */
+var STEPS = [
+  {
+    id: 'tcp-syn', kind: 'tcp', dir: 'b2s', phase: 'TCP 三次握手',
+    label: 'SYN', kindName: 'TCP 报文', logSub: '握手 ①',
+    arrow: '① SYN：请求建立连接',
+    title: 'TCP 三次握手 ①：浏览器发送 SYN 报文',
+    desc: 'HTTP 是应用层协议，传输数据前必须先由传输层建立 TCP 连接。浏览器（客户端）向服务器的 80 端口发送一个 SYN 标志位为 1 的 TCP 报文段，请求建立连接。',
+    duration: 1700,
+    fields: [
+      { k: '类型', v: 'TCP 报文段（传输层）' },
+      { k: '标志位', v: 'SYN=1, ACK=0' },
+      { k: '序号 Seq', v: '0', s: '实际初始序号 ISN 为随机数，此处简化为 0' },
+      { k: '目的端口', v: '80（HTTP 默认端口）' }
+    ],
+    note: '真实 TCP 报文段还包含窗口大小、MSS 等字段，此处为简化演示仅保留与教学相关的字段。',
+    fx: { start: { browser: ['busy', '发送 SYN'], server: ['wait', '监听 80 端口'] } }
+  },
+  {
+    id: 'tcp-synack', kind: 'tcp', dir: 's2b', phase: 'TCP 三次握手',
+    label: 'SYN+ACK', kindName: 'TCP 报文', logSub: '握手 ②',
+    arrow: '② SYN+ACK：同意建立连接',
+    title: 'TCP 三次握手 ②：服务器回应 SYN+ACK',
+    desc: '服务器收到 SYN 后，回发一个 SYN 与 ACK 标志位均为 1 的报文段：SYN 表示同意建立连接，ACK 表示已确认收到浏览器的 SYN。',
+    duration: 1700,
+    fields: [
+      { k: '类型', v: 'TCP 报文段（传输层）' },
+      { k: '标志位', v: 'SYN=1, ACK=1' },
+      { k: '序号 Seq', v: '0', s: '服务器 ISN 同样为随机数，此处简化为 0' },
+      { k: '确认号 Ack', v: '1（= 客户端 Seq + 1）', s: '基于简化序号 0 推算' },
+      { k: '源端口', v: '80' }
+    ],
+    fx: { start: { browser: ['wait', '等待握手响应'], server: ['busy', '回应 SYN+ACK'] } }
+  },
+  {
+    id: 'tcp-ack', kind: 'tcp', dir: 'b2s', phase: 'TCP 三次握手',
+    label: 'ACK', kindName: 'TCP 报文', logSub: '握手 ③',
+    arrow: '③ ACK：连接建立完成',
+    title: 'TCP 三次握手 ③：浏览器回应 ACK，连接建立',
+    desc: '浏览器收到 SYN+ACK 后，回发 ACK 报文段，三次握手完成，TCP 连接进入 ESTABLISHED 状态。此后 HTTP 报文即可在这条连接上传输。',
+    duration: 1500,
+    fields: [
+      { k: '类型', v: 'TCP 报文段（传输层）' },
+      { k: '标志位', v: 'ACK=1' },
+      { k: 'Seq / Ack', v: '1 / 1', s: '基于简化序号推算' },
+      { k: '结果', v: '连接 ESTABLISHED' }
+    ],
+    note: '此处为简化演示：后续拥塞控制、滑动窗口等 TCP 细节不再展示。',
+    fx: { start: { browser: ['busy', '发送 ACK'], server: ['wait', '准备接收请求'] } }
+  },
+  {
+    id: 'http-req-1', kind: 'req', dir: 'b2s', phase: '第一次 HTTP 请求',
+    label: 'GET /', kindName: 'HTTP 请求', logSub: '首次访问 · 无 Cookie',
+    arrow: '④ HTTP 请求：GET /（首次访问，无 Cookie 首部）',
+    title: '第一次 HTTP 请求：GET /（无 Cookie）',
+    desc: '浏览器构造并发送 HTTP 请求报文，请求行为 "GET / HTTP/1.1"。由于是首次访问 shop.example.com，本地没有该域名的 Cookie，因此请求不携带 Cookie 首部。',
+    duration: 2100,
+    fields: [
+      { k: '请求行', v: 'GET / HTTP/1.1' },
+      { k: 'Host', v: 'shop.example.com' },
+      { k: 'User-Agent', v: 'EduBrowser/1.0', s: '示例 UA，实际浏览器取值更复杂' },
+      { k: 'Accept', v: 'text/html' },
+      { k: 'Cookie', v: '（未携带 — 首次访问）' },
+      { k: 'Connection', v: 'keep-alive' }
+    ],
+    note: '请求首部为典型示例值；实际浏览器还会发送 Accept-Language、Accept-Encoding 等字段。',
+    fx: { start: { browser: ['busy', '发送 GET /'], server: ['wait', '等待请求'] } }
+  },
+  {
+    id: 'srv-new-session', kind: 'act', actor: 'server', phase: '第一次 HTTP 请求',
+    label: '⚙️ 服务器：发现新访客，生成 session_id=a1b2c3',
+    kindName: '服务器内部动作',
+    title: '服务器处理：为新访客创建会话',
+    desc: '服务器解析请求后发现没有任何会话信息，判定为新访客：生成全局唯一的 session_id（示例值 a1b2c3），并在服务器端创建一条会话记录——这是服务器"记住"访问者的第一步。',
+    duration: 1600,
+    fields: [
+      { k: '动作', v: '创建新会话记录' },
+      { k: 'session_id', v: 'a1b2c3', s: '示例值，实际通常为更长的随机字符串' },
+      { k: '存储位置', v: '服务器端会话存储（内存 / Redis 等）' }
+    ],
+    fx: { start: { browser: ['wait', '等待响应'], server: ['busy', '生成会话'] } },
+    done: { sessionAdd: true }
+  },
+  {
+    id: 'http-resp-1', kind: 'resp', dir: 's2b', phase: '下发 Cookie',
+    label: '200 + Set-Cookie', kindName: 'HTTP 响应', logSub: '下发 Cookie',
+    arrow: '⑤ HTTP 响应：200 OK + Set-Cookie',
+    title: 'HTTP 响应：200 OK，并用 Set-Cookie 下发 session_id',
+    desc: '服务器返回首页内容，同时通过 Set-Cookie 响应首部把 session_id "交给"浏览器，要求其保存。这正是 Cookie 机制的起点：服务器无法主动联系浏览器，只能借响应"捎带"凭证。',
+    duration: 2100,
+    fields: [
+      { k: '状态行', v: 'HTTP/1.1 200 OK' },
+      { k: 'Set-Cookie', v: 'session_id=a1b2c3; Path=/; HttpOnly' },
+      { k: 'Content-Type', v: 'text/html; charset=UTF-8' },
+      { k: 'Content-Length', v: '1024', s: '示例值' },
+      { k: '报文体', v: '首页 HTML（略）', s: '简化演示' }
+    ],
+    note: 'HttpOnly 是 Cookie 安全属性：禁止前端 JS 通过 document.cookie 读取，有助于缓解 XSS 窃取。此处为简化演示，未展示 Expires / SameSite 等属性。',
+    fx: { start: { browser: ['wait', '等待响应'], server: ['busy', '发送 200 + Set-Cookie'] } }
+  },
+  {
+    id: 'save-cookie', kind: 'act', actor: 'browser', phase: '下发 Cookie',
+    label: '🍪 浏览器：解析 Set-Cookie，写入本地 Cookie 存储',
+    kindName: '浏览器内部动作',
+    title: '浏览器：把 Cookie 存入本地',
+    desc: '浏览器按协议解析 Set-Cookie 首部，将 session_id=a1b2c3 按域名 shop.example.com 存入本地 Cookie 存储（受 Path、HttpOnly 等属性约束）。此后对该域名的每次请求，浏览器都会自动附带这个 Cookie。',
+    duration: 1600,
+    fields: [
+      { k: '动作', v: '写入 Cookie 存储' },
+      { k: '归属域名', v: 'shop.example.com' },
+      { k: '内容', v: 'session_id=a1b2c3' },
+      { k: '属性', v: 'Path=/; HttpOnly' }
+    ],
+    fx: { start: { browser: ['busy', '保存 Cookie'], server: ['wait', '空闲'] } },
+    done: { cookieAdd: 'session_id=a1b2c3' }
+  },
+  {
+    id: 'user-click', kind: 'act', actor: 'browser', phase: '第二次 HTTP 请求',
+    label: '👆 用户点击"购物车"链接（/cart）',
+    kindName: '用户动作',
+    title: '用户动作：点击"购物车"链接',
+    desc: '用户在刚返回的页面上点击指向 /cart 的链接，浏览器需要发起一次新的 HTTP 请求——这一次的情况与首次访问完全不同。',
+    duration: 1300,
+    fields: [
+      { k: '动作', v: '点击超链接' },
+      { k: '目标 URL', v: '/cart' },
+      { k: '结果', v: '触发新的 HTTP 请求' }
+    ],
+    fx: { start: { browser: ['busy', '用户点击链接'], server: ['wait', '空闲'] } }
+  },
+  {
+    id: 'http-req-2', kind: 'req', dir: 'b2s', phase: '第二次 HTTP 请求',
+    label: 'GET /cart', kindName: 'HTTP 请求', logSub: '携带 Cookie',
+    arrow: '⑥ HTTP 请求：GET /cart（自动携带 Cookie）',
+    title: '第二次 HTTP 请求：GET /cart（携带 Cookie）',
+    desc: '发送请求前，浏览器发现本地存有 shop.example.com 的 Cookie，于是按协议自动加上 Cookie 请求首部，携带 session_id。这就是服务器识别用户身份的"凭证"。',
+    duration: 2100,
+    fields: [
+      { k: '请求行', v: 'GET /cart HTTP/1.1' },
+      { k: 'Host', v: 'shop.example.com' },
+      { k: 'Cookie', v: 'session_id=a1b2c3' },
+      { k: 'Connection', v: 'keep-alive' }
+    ],
+    note: 'Cookie 由浏览器自动附带，用户无需手动设置；仅发送与目标域名、Path 匹配的 Cookie。',
+    fx: { start: { browser: ['busy', '发送 GET /cart'], server: ['wait', '等待请求'] } }
+  },
+  {
+    id: 'srv-check-session', kind: 'act', actor: 'server', phase: '第二次 HTTP 请求',
+    label: '🔍 服务器：用 session_id 查询会话表 → 命中',
+    kindName: '服务器内部动作',
+    title: '服务器处理：凭 Cookie 查回会话',
+    desc: '服务器从 Cookie 首部读取 session_id=a1b2c3，在会话表中命中对应记录——服务器由此"认出"这位访客，并能读取该会话绑定的购物车等状态。',
+    duration: 1600,
+    fields: [
+      { k: '动作', v: '从 Cookie 首部提取 session_id' },
+      { k: '查询结果', v: 'a1b2c3 → 命中会话记录' },
+      { k: '后续', v: '加载用户状态（购物车等）' }
+    ],
+    fx: { start: { browser: ['wait', '等待响应'], server: ['busy', '查询会话'] } },
+    done: { sessionChecked: true }
+  },
+  {
+    id: 'http-resp-2', kind: 'resp', dir: 's2b', phase: '第二次 HTTP 请求',
+    label: '200 OK', kindName: 'HTTP 响应', logSub: '个性化页面',
+    arrow: '⑦ HTTP 响应：200 OK（个性化内容）',
+    title: 'HTTP 响应：返回个性化购物车页面',
+    desc: '服务器依据会话数据生成购物车页面并返回。本次响应无需再带 Set-Cookie（Cookie 未变化）；如需续期或更新，服务器可随时再次通过 Set-Cookie 更新。',
+    duration: 2100,
+    fields: [
+      { k: '状态行', v: 'HTTP/1.1 200 OK' },
+      { k: 'Content-Type', v: 'text/html; charset=UTF-8' },
+      { k: 'Content-Length', v: '2048', s: '示例值' },
+      { k: 'Set-Cookie', v: '（无 — 本次无需更新）' },
+      { k: '报文体', v: '个性化购物车页面（略）', s: '简化演示' }
+    ],
+    fx: { start: { browser: ['wait', '等待响应'], server: ['busy', '发送个性化页面'] } }
+  },
+  {
+    id: 'wrap-up', kind: 'end', actor: 'browser', phase: '小结',
+    label: '✅ 演示完成：无状态 HTTP + Cookie = 跨请求"认人"',
+    kindName: '小结',
+    title: '演示完成：Cookie 让无状态的 HTTP 拥有"记忆"',
+    desc: '小结：HTTP 协议本身是无状态的，服务器天然无法认出两次请求来自同一用户。Cookie 在客户端保存凭证（session_id），每次同域请求自动带回，服务器再与服务器端会话表配对，从而实现跨请求的用户识别。可点击任意箭头或消息记录回顾字段。',
+    duration: 1600,
+    fields: [
+      { k: '要点 ①', v: 'HTTP 无状态：每次请求相互独立' },
+      { k: '要点 ②', v: 'Set-Cookie：服务器 → 浏览器，下发凭证' },
+      { k: '要点 ③', v: 'Cookie：浏览器 → 服务器，自动带回凭证' },
+      { k: '要点 ④', v: '会话表：真正的用户状态保存在服务器端' },
+      { k: '连接', v: 'keep-alive 保持复用，未演示 FIN 关闭', s: '简化演示' }
+    ],
+    note: '此处为简化演示：未展示 TCP 连接释放（FIN 四次挥手）过程；实际连接可能被关闭或继续复用。',
+    fx: { start: { browser: ['wait', '页面渲染完成'], server: ['wait', '连接保持（keep-alive）'] } }
+  }
+];
+
+/* ============================================================
+   二、场景几何常量（SVG viewBox 坐标系）
+   ============================================================ */
+var GEO = {
+  W: 920,           // 画布宽
+  xB: 170,          // 浏览器生命线 x
+  xS: 750,          // 服务器生命线 x
+  nodeY: 16, nodeW: 220, nodeH: 92,
+  startY: 150,      // 第一条消息的起始 y
+  rowArrow: 66,     // 数据包步骤行高
+  rowAct: 44,       // 内部动作步骤行高
+  packetW: 160, packetH: 44
+};
+var SVG_NS = 'http://www.w3.org/2000/svg';
+var THEME_KEY = 'netlab-http-cookie-theme';
+
+/* ============================================================
+   三、运行状态
+   ============================================================ */
+var engine = {
+  stepIndex: -1,        // 当前步骤下标；-1 = 未开始
+  progress: 0,          // 当前步骤进度 0..1
+  playing: false,
+  stopOnStepEnd: false, // 单步模式：播完当前步骤即暂停
+  speed: 1,
+  rafId: null,
+  lastTs: null
+};
+var storeState = { cookie: null, sessionExists: false, sessionChecked: false };
+var currentInfo = { type: 'default' };
+var refs = { arrows: [], acts: [], logRows: [] };   // 按步骤下标索引的 SVG/日志引用
+var nodeStatus = {};   // { browser: {dot,label}, server: {...} }
+var nodeGroups = {};
+var selectedEl = null;
+var els = {};          // 数据包组引用
+
+/* ============================================================
+   四、DOM 引用
+   ============================================================ */
+function $(id) { return document.getElementById(id); }
+var svg = $('scene'),
+    phaseChip = $('phaseChip'),
+    cookieList = $('cookieList'), sessionList = $('sessionList'),
+    cookieStoreCard = $('cookieStoreCard'), sessionStoreCard = $('sessionStoreCard'),
+    btnPlay = $('btnPlay'), btnPause = $('btnPause'), btnStep = $('btnStep'), btnReset = $('btnReset'),
+    speedRange = $('speedRange'), speedVal = $('speedVal'),
+    progressFill = $('progressFill'), progressText = $('progressText'),
+    stepNoEl = $('stepNo'), stepTitle = $('stepTitle'), stepDesc = $('stepDesc'), stepNote = $('stepNote'),
+    infoBody = $('infoBody'), msgLog = $('msgLog'),
+    btnTheme = $('btnTheme'), themeIcon = $('themeIcon'), themeLabel = $('themeLabel');
+
+/* ============================================================
+   五、主题模块（独立封装；颜色全部来自 CSS 变量）
+   ============================================================ */
+function getPreferredTheme() {
+  try {
+    var saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch (e) { /* 忽略 */ }
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+
+/** 应用主题。persist=false 时不写入 localStorage（用于初始化与跟随系统）。 */
+function applyTheme(theme, persist) {
+  document.documentElement.setAttribute('data-theme', theme);
+  if (persist) { try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* 忽略 */ } }
+  // 按钮标识"切换目标"主题
+  var next = (theme === 'dark') ? 'light' : 'dark';
+  themeIcon.textContent = (next === 'dark') ? '🌙' : '☀️';
+  themeLabel.textContent = '切换到' + (next === 'dark' ? '深色' : '浅色');
+  btnTheme.setAttribute('aria-label', '切换到' + next + '主题');
+}
+
+function toggleTheme() {
+  var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  applyTheme(cur === 'dark' ? 'light' : 'dark', true);
+}
+
+/* ============================================================
+   六、工具函数
+   ============================================================ */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function smooth(t) { return t * t * (3 - 2 * t); }  // smoothstep 缓动
+function hasPacket(st) { return !!st.dir; }
+
+function svgEl(tag, attrs, parent) {
+  var el = document.createElementNS(SVG_NS, tag);
+  for (var k in attrs) el.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(el);
+  return el;
+}
+
+/* ============================================================
+   七、场景构建（依据 STEPS 动态生成时序图）
+   ============================================================ */
+function buildScene() {
+  // 1) 计算每步行高与总高度
+  var y = GEO.startY;
+  STEPS.forEach(function (st) {
+    st.rowH = hasPacket(st) ? GEO.rowArrow : GEO.rowAct;
+    st.rowY = y + st.rowH / 2;
+    y += st.rowH;
+  });
+  var H = y + 30;
+  svg.setAttribute('viewBox', '0 0 ' + GEO.W + ' ' + H);
+
+  // 2) 生命线
+  var lifeLayer = svgEl('g', { 'class': 'layer-lifelines' }, svg);
+  [GEO.xB, GEO.xS].forEach(function (x) {
+    svgEl('line', { 'class': 'lifeline', x1: x, y1: GEO.nodeY + GEO.nodeH, x2: x, y2: H - 16 }, lifeLayer);
+  });
+
+  // 3) 消息箭头 / 内部动作
+  var msgLayer = svgEl('g', { 'class': 'layer-msgs' }, svg);
+  var msgNo = 0;
+  STEPS.forEach(function (st, i) {
+    if (hasPacket(st)) { msgNo++; st.msgNo = msgNo; refs.arrows[i] = drawArrow(st, i, msgLayer); }
+    else { refs.acts[i] = drawAct(st, i, msgLayer); }
+  });
+
+  // 4) 两端节点
+  nodeGroups.browser = drawNode('browser', GEO.xB, '🖥️ 浏览器', 'HTTP 客户端 · 内置 Cookie 存储');
+  nodeGroups.server  = drawNode('server',  GEO.xS, '🌐 服务器', 'shop.example.com · 端口 80');
+
+  // 5) 可移动数据包（复用同一个元素）
+  buildPacket();
+}
+
+function drawNode(id, x, title, subtitle) {
+  var g = svgEl('g', { 'class': 'node', 'data-node': id }, svg);
+  svgEl('rect', { 'class': 'node-box', x: x - GEO.nodeW / 2, y: GEO.nodeY, width: GEO.nodeW, height: GEO.nodeH, rx: 14 }, g);
+  var t1 = svgEl('text', { 'class': 'node-title', x: x, y: GEO.nodeY + 34, 'text-anchor': 'middle' }, g);
+  t1.textContent = title;
+  var t2 = svgEl('text', { 'class': 'node-sub', x: x, y: GEO.nodeY + 56, 'text-anchor': 'middle' }, g);
+  t2.textContent = subtitle;
+  var dot = svgEl('circle', { 'class': 'status-dot st-wait', cx: x - 88, cy: GEO.nodeY + 74, r: 5.5 }, g);
+  var st = svgEl('text', { 'class': 'status-label', x: x - 76, y: GEO.nodeY + 78.5 }, g);
+  st.textContent = '空闲';
+  nodeStatus[id] = { dot: dot, label: st };
+  g.addEventListener('click', function () { selectNode(id); });
+  return g;
+}
+
+function drawArrow(st, i, layer) {
+  var y = st.rowY, dir = (st.dir === 'b2s') ? 1 : -1;
+  var xFrom = (dir > 0) ? GEO.xB : GEO.xS;
+  var xTo   = (dir > 0) ? GEO.xS : GEO.xB;
+
+  var g = svgEl('g', { 'class': 'msg kind-' + st.kind, 'data-step': i }, layer);
+  var label = svgEl('text', { 'class': 'msg-label', x: (GEO.xB + GEO.xS) / 2, y: y - 28, 'text-anchor': 'middle' }, g);
+  label.textContent = st.arrow;
+
+  var guide = svgEl('line', { 'class': 'arrow-guide', x1: xFrom, y1: y, x2: xTo, y2: y }, g);
+  var lineStart = xFrom + dir * 4;
+  var prog = svgEl('line', { 'class': 'arrow-progress', x1: lineStart, y1: y, x2: lineStart, y2: y }, g);
+
+  var tipX = xTo - dir * 2, baseX = xTo - dir * 13;
+  var head = svgEl('polygon', { 'class': 'arrow-head', points: tipX + ',' + y + ' ' + baseX + ',' + (y - 5.5) + ' ' + baseX + ',' + (y + 5.5) }, g);
+  head.style.opacity = '0';
+
+  // 预存运动轨迹参数
+  st.travel = {
+    dir: dir, lineStart: lineStart, baseX: baseX,
+    startC: xFrom + dir * 100,   // 数据包中心起点
+    endC: xTo - dir * 100        // 数据包中心终点
+  };
+
+  g.addEventListener('click', function () { selectStep(i); });
+  return { g: g, guide: guide, prog: prog, head: head };
+}
+
+function drawAct(st, i, layer) {
+  var y = st.rowY;
+  var g = svgEl('g', { 'class': 'act kind-' + st.kind, 'data-step': i }, layer);
+  if (st.kind === 'end') {
+    var w = 560;
+    svgEl('rect', { 'class': 'end-pill', x: (GEO.W - w) / 2, y: y - 17, width: w, height: 34, rx: 17 }, g);
+    var te = svgEl('text', { 'class': 'end-text', x: GEO.W / 2, y: y + 4.5, 'text-anchor': 'middle' }, g);
+    te.textContent = st.label;
+  } else {
+    var lx = (st.actor === 'server') ? GEO.xS : GEO.xB;
+    svgEl('rect', { 'class': 'act-box', x: lx - 10, y: y - 15, width: 20, height: 30, rx: 6 }, g);
+    var anchor = (st.actor === 'server') ? 'end' : 'start';
+    var t = svgEl('text', { 'class': 'act-label', x: lx + ((st.actor === 'server') ? -24 : 24), y: y + 4.5, 'text-anchor': anchor }, g);
+    t.textContent = st.label;
+  }
+  g.addEventListener('click', function () { selectStep(i); });
+  return { g: g };
+}
+
+function buildPacket() {
+  var g = svgEl('g', { 'class': 'packet', 'data-role': 'packet' }, svg);
+  svgEl('rect', { x: -GEO.packetW / 2, y: -GEO.packetH / 2, width: GEO.packetW, height: GEO.packetH, rx: 11 }, g);
+  var kind = svgEl('text', { 'class': 'pk-kind', 'text-anchor': 'middle', y: -5 }, g);
+  var lab  = svgEl('text', { 'class': 'pk-label', 'text-anchor': 'middle', y: 14 }, g);
+  var tip  = svgEl('title', {}, g);
+  g.style.display = 'none';
+  g.addEventListener('click', function () { if (engine.stepIndex >= 0) selectStep(engine.stepIndex); });
+  els.packet = { g: g, kind: kind, lab: lab, tip: tip };
+}
+
+function showPacket(st) {
+  var p = els.packet;
+  p.g.classList.remove('kind-tcp', 'kind-req', 'kind-resp');
+  p.g.classList.add('kind-' + st.kind);
+  p.kind.textContent = st.kindName;
+  p.lab.textContent = st.label;
+  p.tip.textContent = st.title;
+  p.g.style.display = '';
+}
+function hidePacket() { els.packet.g.style.display = 'none'; }
+
+/* ============================================================
+   八、动画引擎（播放 / 暂停 / 单步 / 重置）
+   ============================================================ */
+function isFinished() {
+  return engine.stepIndex >= STEPS.length - 1 && engine.progress >= 1;
+}
+
+function startPlayback() {
+  engine.playing = true;
+  engine.lastTs = null;
+  syncControls();
+  engine.rafId = requestAnimationFrame(tick);
+}
+function pausePlayback() {
+  engine.playing = false;
+  if (engine.rafId) cancelAnimationFrame(engine.rafId);
+  engine.rafId = null;
+  syncControls();
+}
+
+function tick(ts) {
+  if (!engine.playing) return;
+  if (engine.lastTs === null) engine.lastTs = ts;
+  var dt = Math.min(ts - engine.lastTs, 100); // 限制步长，避免切后台后跳变
+  engine.lastTs = ts;
+
+  var st = STEPS[engine.stepIndex];
+  if (st) {
+    engine.progress += (dt * engine.speed) / st.duration;
+    if (engine.progress >= 1) { finishCurrentStep(); }
+    else { renderStepFrame(); }
+  }
+  if (engine.playing) engine.rafId = requestAnimationFrame(tick);
+}
+
+/** 开始播放 / 续播；已结束则重播。 */
+function play() {
+  if (engine.playing) return;
+  if (isFinished()) resetAll();
+  if (engine.stepIndex === -1) { startStep(0); }
+  else if (engine.progress >= 1) {           // 停在步骤边界 → 从下一步继续
+    var nxt = engine.stepIndex + 1;
+    if (nxt < STEPS.length) startStep(nxt);
+  }
+  engine.stopOnStepEnd = false;
+  startPlayback();
+}
+
+/** 单步执行：动画播放恰好一个步骤后自动暂停；若正处于某步骤中途，则立即完成该步骤。 */
+function stepOnce() {
+  if (isFinished()) return;
+  if (engine.stepIndex >= 0 && engine.progress < 1) {
+    pausePlayback();
+    engine.progress = 1;
+    renderStepFrame();
+    concludeStep();
+    updateProgressUI();
+    return;
+  }
+  var nxt = engine.stepIndex + 1;
+  if (nxt >= STEPS.length) return;
+  startStep(nxt);
+  engine.stopOnStepEnd = true;
+  startPlayback();
+}
+
+/** 进入第 i 步：更新说明区、状态灯、箭头/动作、数据包、日志。 */
+function startStep(i) {
+  var st = STEPS[i];
+  engine.stepIndex = i;
+  engine.progress = 0;
+
+  renderStepInfo(i);
+  setStatus('browser', st.fx.start.browser);
+  setStatus('server', st.fx.start.server);
+
+  if (hasPacket(st)) {
+    refs.arrows[i].g.classList.add('active');
+    showPacket(st);
+    addLogRow(st, i);
+  } else {
+    refs.acts[i].g.classList.add('active');
+  }
+  renderStepFrame();
+  updateProgressUI();
+  syncControls();
+}
+
+/** 每帧渲染：移动数据包、绘制已走过的箭头、刷新进度条。 */
+function renderStepFrame() {
+  var i = engine.stepIndex;
+  if (i >= 0) {
+    var st = STEPS[i];
+    if (hasPacket(st)) {
+      var t = smooth(Math.max(0, Math.min(1, engine.progress)));
+      var cx = st.travel.startC + (st.travel.endC - st.travel.startC) * t;
+      els.packet.g.setAttribute('transform', 'translate(' + cx + ',' + st.rowY + ')');
+      var endX = cx - st.travel.dir * (GEO.packetW / 2 + 4);
+      refs.arrows[i].prog.setAttribute('x2', endX);
+    }
+  }
+  updateProgressUI();
+}
+
+/** 当前步骤动画走完时的流程控制。 */
+function finishCurrentStep() {
+  engine.progress = 1;
+  renderStepFrame();
+  concludeStep();
+  if (engine.stopOnStepEnd) {
+    engine.stopOnStepEnd = false;
+    pausePlayback();
+    return;
+  }
+  var next = engine.stepIndex + 1;
+  if (next < STEPS.length) { startStep(next); }
+  else { pausePlayback(); onAllDone(); }
+}
+
+/** 落实当前步骤的收尾视觉与状态变更（不推进步骤）。 */
+function concludeStep() {
+  var i = engine.stepIndex, st = STEPS[i];
+  if (hasPacket(st)) {
+    var a = refs.arrows[i];
+    a.prog.setAttribute('x2', st.travel.baseX);
+    a.head.style.opacity = '1';
+    a.g.classList.remove('active');
+    a.g.classList.add('done');
+    hidePacket();
+  } else {
+    refs.acts[i].g.classList.remove('active');
+    refs.acts[i].g.classList.add('done');
+  }
+  var row = refs.logRows[i];
+  if (row) { row.classList.remove('active'); row.classList.add('done'); }
+  applyDoneEffects(st);
+}
+
+/** 步骤结束时同步更新存储状态（Cookie / 会话表）。 */
+function applyDoneEffects(st) {
+  var d = st.done || {};
+  if (d.cookieAdd) { storeState.cookie = d.cookieAdd; renderCookieStore(true); }
+  if (d.sessionAdd) { storeState.sessionExists = true; renderSessionStore(true); }
+  if (d.sessionChecked) { storeState.sessionChecked = true; renderSessionStore(true); }
+  if (currentInfo.type === 'node') showNodeInfo(currentInfo.id); // 实时刷新节点详情
+}
+
+function onAllDone() {
+  phaseChip.textContent = '已完成 ✓';
+  phaseChip.classList.add('done');
+  updateProgressUI();
+  syncControls();
+}
+
+/** 重置到初始状态。 */
+function resetAll() {
+  pausePlayback();
+  engine.stepIndex = -1;
+  engine.progress = 0;
+  engine.stopOnStepEnd = false;
+
+  STEPS.forEach(function (st, i) {
+    if (hasPacket(st)) {
+      var a = refs.arrows[i];
+      a.g.classList.remove('active', 'done', 'selected');
+      a.prog.setAttribute('x2', st.travel.lineStart);
+      a.head.style.opacity = '0';
+    } else {
+      refs.acts[i].g.classList.remove('active', 'done', 'selected');
+    }
+    if (refs.logRows[i]) { refs.logRows[i].remove(); refs.logRows[i] = null; }
+  });
+  hidePacket();
+  clearSelection();
+
+  storeState.cookie = null;
+  storeState.sessionExists = false;
+  storeState.sessionChecked = false;
+  renderCookieStore(false);
+  renderSessionStore(false);
+
+  setStatus('browser', ['wait', '空闲']);
+  setStatus('server', ['wait', '监听 80 端口']);
+
+  msgLog.innerHTML = '<li class="log-empty">（暂无消息 — 点击"播放"开始）</li>';
+  phaseChip.textContent = '准备中';
+  phaseChip.classList.remove('done');
+
+  renderIntro();
+  currentInfo = { type: 'default' };
+  renderInfoDefault();
+  updateProgressUI();
+  syncControls();
+}
+
+/* ============================================================
+   九、界面同步渲染
+   ============================================================ */
+function setStatus(node, pair) {
+  var s = nodeStatus[node];
+  if (!s) return;
+  s.dot.setAttribute('class', 'status-dot st-' + pair[0]);
+  s.label.textContent = pair[1];
+}
+
+function renderCookieStore(flash) {
+  cookieList.innerHTML = storeState.cookie
+    ? '<span class="cookie-chip">🍪 ' + esc(storeState.cookie) + '</span>'
+    : '<span class="store-empty">（空 — 尚无任何 Cookie）</span>';
+  if (flash) flashCard(cookieStoreCard);
+}
+function renderSessionStore(flash) {
+  if (!storeState.sessionExists) {
+    sessionList.innerHTML = '<span class="store-empty">（空 — 尚无会话）</span>';
+  } else {
+    sessionList.innerHTML =
+      '<div class="session-row"><code>session_id=a1b2c3</code>' +
+      '<span class="tag ' + (storeState.sessionChecked ? 'tag-ok">✓ 已验证' : 'tag-new">新会话') + '</span></div>';
+  }
+  if (flash) flashCard(sessionStoreCard);
+}
+function flashCard(el) {
+  el.classList.remove('flash');
+  void el.offsetWidth;          // 强制重排以重启动画
+  el.classList.add('flash');
+}
+
+function renderStepInfo(i) {
+  var st = STEPS[i];
+  stepNoEl.textContent = '步骤 ' + (i + 1) + ' / ' + STEPS.length;
+  stepTitle.textContent = st.title;
+  stepDesc.textContent = st.desc;
+  if (st.note) { stepNote.hidden = false; stepNote.textContent = '⚠️ 简化演示：' + st.note; }
+  else { stepNote.hidden = true; }
+  phaseChip.textContent = st.phase;
+  phaseChip.classList.remove('done');
+}
+
+function renderIntro() {
+  stepNoEl.textContent = '未开始 · 共 ' + STEPS.length + ' 步';
+  stepTitle.textContent = '准备就绪：浏览器即将访问 shop.example.com';
+  stepDesc.textContent = '本动画演示 HTTP 报文与 Cookie 的完整协作：① TCP 三次握手 → ② 首次请求（无 Cookie）→ ③ 服务器通过 Set-Cookie 下发 session_id → ④ 浏览器保存 Cookie → ⑤ 第二次请求自动携带 Cookie → ⑥ 服务器识别用户并返回个性化页面。点击"▶ 播放"开始，或使用"⏭ 单步执行"逐步观察。';
+  stepNote.hidden = false;
+  stepNote.textContent = '⚠️ 简化演示：本页面为教学简化模型，具体简化项见页脚"简化演示说明"。';
+}
+
+function updateProgressUI() {
+  var done = (engine.stepIndex < 0) ? 0 : (engine.stepIndex + Math.min(1, engine.progress));
+  var pct = Math.round(done / STEPS.length * 100);
+  progressFill.style.width = pct + '%';
+  progressText.textContent = pct + '%';
+}
+
+function syncControls() {
+  btnPlay.disabled = engine.playing;
+  btnPause.disabled = !engine.playing;
+  btnStep.disabled = isFinished();
+}
+
+function addLogRow(st, i) {
+  var empty = msgLog.querySelector('.log-empty');
+  if (empty) empty.remove();
+  var li = document.createElement('li');
+  li.className = 'log-row kind-' + st.kind + ' active';
+  li.dataset.step = i;
+  var dirChar = (st.dir === 'b2s') ? '→' : '←';
+  li.innerHTML =
+    '<span class="log-dot"></span>' +
+    '<span class="log-no">' + st.msgNo + '</span>' +
+    '<span class="log-dir">' + dirChar + '</span>' +
+    '<span class="log-main">' + esc(st.label) + '<small>' + esc(st.logSub || '') + '</small></span>';
+  li.addEventListener('click', function () { selectStep(i); });
+  msgLog.appendChild(li);
+  refs.logRows[i] = li;
+}
+
+/* ============================================================
+   十、信息面板与选中高亮
+   ============================================================ */
+function clearSelection() {
+  if (selectedEl) { selectedEl.classList.remove('selected'); selectedEl = null; }
+}
+
+function selectStep(i) {
+  clearSelection();
+  var st = STEPS[i];
+  var target = hasPacket(st) ? refs.arrows[i].g : refs.acts[i].g;
+  target.classList.add('selected');
+  selectedEl = target;
+  showStepInfo(i);
+}
+
+function selectNode(id) {
+  clearSelection();
+  var g = nodeGroups[id];
+  g.classList.add('selected');
+  selectedEl = g;
+  showNodeInfo(id);
+}
+
+function fieldTable(st) {
+  var rows = st.fields.map(function (f) {
+    var mini = f.s ? ' <span class="mini-note" title="' + esc(f.s) + '">⚠ 简化</span>' : '';
+    return '<tr><th>' + esc(f.k) + '</th><td>' + esc(f.v) + mini + '</td></tr>';
+  }).join('');
+  return '<table class="fields"><tbody>' + rows + '</tbody></table>';
+}
+
+function showStepInfo(i) {
+  var st = STEPS[i];
+  currentInfo = { type: 'step', i: i };
+  var dirTxt;
+  if (hasPacket(st)) dirTxt = (st.dir === 'b2s') ? '浏览器 → 服务器' : '服务器 → 浏览器';
+  else if (st.kind === 'end') dirTxt = '总结';
+  else dirTxt = (st.actor === 'browser') ? '浏览器内部动作' : '服务器内部动作';
+
+  var html =
+    '<div class="info-head"><span class="chip kind-' + st.kind + '">' + esc(st.kindName) + '</span>' +
+    '<h3>' + esc(st.title) + '</h3></div>' +
+    '<p class="info-dir">' + dirTxt + (hasPacket(st) ? ' · 消息 #' + st.msgNo : '') + ' · 步骤 ' + (i + 1) + '/' + STEPS.length + '</p>' +
+    fieldTable(st);
+  if (st.note) html += '<p class="note">⚠️ 简化演示：' + esc(st.note) + '</p>';
+  infoBody.innerHTML = html;
+}
+
+function showNodeInfo(id) {
+  currentInfo = { type: 'node', id: id };
+  var rows, head, note;
+  if (id === 'browser') {
+    head = '🖥️ 浏览器（HTTP 客户端）';
+    rows = [
+      ['角色', '发起 HTTP 请求；解析并渲染响应'],
+      ['示例软件', 'Chrome / Firefox / Edge / Safari'],
+      ['User-Agent（示例）', 'EduBrowser/1.0'],
+      ['Cookie 存储', storeState.cookie ? esc(storeState.cookie) : '（空 — 尚无 Cookie）'],
+      ['当前状态', nodeStatus.browser.label.textContent]
+    ];
+    note = 'Cookie 按域名隔离保存；发送请求时，浏览器只自动附带与目标域名、Path 匹配的 Cookie。';
+  } else {
+    var sessionHtml = storeState.sessionExists
+      ? 'session_id=a1b2c3 ' + (storeState.sessionChecked ? '（✓ 已验证）' : '（新会话）')
+      : '（空 — 尚无会话）';
+    head = '🌐 服务器（shop.example.com）';
+    rows = [
+      ['监听端口', '80（HTTP 默认；HTTPS 为 443）'],
+      ['角色', '处理请求、维护会话、返回响应'],
+      ['会话表', esc(sessionHtml)],
+      ['当前状态', nodeStatus.server.label.textContent]
+    ];
+    note = '会话数据保存在服务器端，Cookie 只是客户端持有的"凭证号"。凭证若被窃取仍可被冒用身份，因此需配合 HttpOnly、Secure、HTTPS 等机制防护。';
+  }
+  var html = '<div class="info-head"><h3>' + head + '</h3></div>' +
+    '<table class="fields"><tbody>' +
+    rows.map(function (r) { return '<tr><th>' + esc(r[0]) + '</th><td>' + r[1] + '</td></tr>'; }).join('') +
+    '</tbody></table><p class="note">' + esc(note) + '</p>';
+  infoBody.innerHTML = html;
+}
+
+function renderInfoDefault() {
+  infoBody.innerHTML =
+    '<p>点击场景中的对象即可在此查看详细信息：</p>' +
+    '<ul class="hint-list">' +
+    '<li><b>节点</b>：点击"浏览器"或"服务器"，查看设备角色与实时存储内容；</li>' +
+    '<li><b>数据包</b>：点击移动中的数据包、箭头或"消息记录"条目，查看报文全部字段；</li>' +
+    '<li><b>建议</b>：初学者使用"单步执行"，对照字段面板逐步观察每条消息。</li>' +
+    '</ul>';
+}
+
+/* ============================================================
+   十一、事件绑定与初始化
+   ============================================================ */
+function bindEvents() {
+  btnPlay.addEventListener('click', play);
+  btnPause.addEventListener('click', pausePlayback);
+  btnStep.addEventListener('click', stepOnce);
+  btnReset.addEventListener('click', resetAll);
+  btnTheme.addEventListener('click', toggleTheme);
+
+  speedRange.addEventListener('input', function () {
+    engine.speed = parseFloat(speedRange.value);
+    speedVal.textContent = (Math.round(engine.speed * 100) / 100) + '×';
+  });
+
+  // 点击 SVG 空白处：取消选中并回到默认信息
+  svg.addEventListener('click', function (e) {
+    if (!e.target.closest('.node, .msg, .act, .packet')) {
+      clearSelection();
+      currentInfo = { type: 'default' };
+      renderInfoDefault();
+    }
+  });
+
+  // 键盘快捷键
+  document.addEventListener('keydown', function (e) {
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.code === 'Space') {
+      if (tag === 'BUTTON') return;        // 让按钮自身的点击生效，避免双触发
+      e.preventDefault();
+      if (engine.playing) pausePlayback(); else play();
+    } else if (e.code === 'KeyS' || e.code === 'ArrowRight') {
+      e.preventDefault();
+      stepOnce();
+    } else if (e.code === 'KeyR') {
+      resetAll();
+    } else if (e.code === 'KeyT') {
+      toggleTheme();
+    }
+  });
+
+  // 无手动保存偏好时，跟随系统主题变化
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (ev) {
+      var saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch (err) { /* 忽略 */ }
+      if (!saved) applyTheme(ev.matches ? 'dark' : 'light', false);
+    });
+  } catch (e) { /* 旧环境忽略 */ }
+}
+
+function init() {
+  buildScene();
+  bindEvents();
+  applyTheme(getPreferredTheme(), false); // 初始化按钮标识；不写入存储以保留"跟随系统"
+  resetAll();                             // 渲染初始状态
+}
+
+init();
+})();
+</script>
+</body>
+</html>

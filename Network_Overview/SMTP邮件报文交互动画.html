@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMTP 报文交换可交互动画演示 · 自顶向下方法（第 8 版）</title>
+<!--
+  =====================================================================
+  实验主题：计算机网络：自顶向下方法（第 8 版）
+           SMTP 客户（C）与 SMTP 服务器（S）之间交换报文文本的例子
+  技术栈 ：原生 HTML / CSS / JavaScript，无任何外部依赖
+  说明   ：
+   1. 协议流程取自教材 “SMTP in Action”：alpha.edu（C）与 beta.gov（S，端口 25）。
+   2. 教学简化处（页面与代码中均有标注“简化演示”）：
+      - TCP 三次握手 / 四次挥手过程省略，仅表现“连接已建立/已关闭”；
+      - 教材例子使用 telnet 手动连接，页面不模拟 telnet 协商；
+      - SMTP 报文实际以 CRLF 作为行结束符，结束数据标志为 <CRLF>.<CRLF>，
+        页面上不逐字符展示；也不展示“点填充（dot-stuffing）”转义；
+      - 客户使用的临时端口号、用户代理撰写邮件过程不展示；
+      - 数据包的飞行动画只表示报文先后顺序，不代表真实传输时延。
+   3. 修改实验流程：仅需编辑 JS 中的 STEPS 数组（见注释）。
+  =====================================================================
+-->
+<!-- 提前应用主题，避免刷新时闪烁 -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('smtp-demo-theme');
+    if (t !== 'light' && t !== 'dark') {
+      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        ? 'dark' : 'light';
+    }
+    document.documentElement.dataset.theme = t;
+  } catch (e) {
+    document.documentElement.dataset.theme = 'light';
+  }
+})();
+</script>
+<style>
+/* ============================================================
+   一、主题变量：全部颜色集中于此，禁止在组件中硬编码颜色
+   ============================================================ */
+:root{
+  color-scheme: light;
+  --bg:#eef2f8;            --panel:#ffffff;       --panel-2:#f2f5fa;
+  --border:#d7deea;        --text:#182130;        --muted:#54617a;
+  --accent:#2a5fc4;        --accent-text:#ffffff;
+  /* 报文语义色（两种主题含义一致，仅明度/饱和度不同） */
+  --cmd:#1c58c2;           --cmd-stroke:#143e8f;  --cmd-text:#ffffff;  --cmd-accent:#1a4fb0; /* 命令 C→S */
+  --resp:#7a3ec2;          --resp-stroke:#5a2c93; --resp-text:#ffffff; --resp-accent:#7a3ec2;/* 应答 S→C */
+  /* 状态语义色 */
+  --st-send:#1c9d55; --st-wait:#c98a12; --st-recv:#2a7fd4; --st-err:#d64545; --st-idle:#8b95a7;
+  --link-down:#b6c0d0;     --link-up:#1c9d55;     --link-label:#54617a;
+  --node-fill:#ffffff;     --node-stroke:#2a5fc4; --icon:#2a5fc4;
+  --code-bg:#f4f6fb;       --shadow:0 2px 10px rgba(20,30,60,.08);
+}
+html[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0d1322;            --panel:#161e30;       --panel-2:#1f2941;
+  --border:#2c3852;        --text:#e9eef7;        --muted:#a5b1c7;
+  --accent:#6ea1ff;        --accent-text:#0a1120;
+  --cmd:#3f83f5;           --cmd-stroke:#8fb8ff;  --cmd-text:#081428;  --cmd-accent:#8ab6ff;
+  --resp:#b07ef0;          --resp-stroke:#d5b6ff; --resp-text:#1c0f33; --resp-accent:#c7a3ff;
+  --st-send:#3ecf7a; --st-wait:#f0b23e; --st-recv:#58a6ff; --st-err:#ff6b6b; --st-idle:#8593ab;
+  --link-down:#3a465f;     --link-up:#3ecf7a;     --link-label:#a5b1c7;
+  --node-fill:#1a2338;     --node-stroke:#6ea1ff; --icon:#6ea1ff;
+  --code-bg:#101828;       --shadow:0 2px 12px rgba(0,0,0,.45);
+}
+
+/* ============================================================
+   二、基础布局
+   ============================================================ */
+*{box-sizing:border-box}
+body{
+  margin:0; padding:16px 20px 30px;
+  background:var(--bg); color:var(--text);
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  transition:background-color .3s ease,color .3s ease;
+}
+.mono,pre,kbd,.log-box{font-family:Consolas,Menlo,"Courier New",monospace}
+.app-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+h1{font-size:21px;margin:0 0 4px}
+.subtitle{margin:0;color:var(--muted);font-size:13px}
+main{max-width:1280px;margin:0 auto}
+
+.panel{
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;box-shadow:var(--shadow);
+  transition:background-color .3s ease,border-color .3s ease;
+}
+.panel h2{font-size:14px;margin:0 0 10px;letter-spacing:.5px}
+.panel h3{font-size:13px;margin:12px 0 6px;color:var(--muted)}
+
+/* 主题切换按钮（右上角） */
+.theme-btn{
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+  background:var(--panel);color:var(--text);
+  border:1px solid var(--border);border-radius:20px;padding:7px 14px;font-size:13px;
+  transition:background-color .3s,color .3s,border-color .3s,transform .1s;
+}
+.theme-btn:hover{border-color:var(--accent)}
+.theme-btn:active{transform:scale(.97)}
+
+/* 场景区 */
+.scene-panel{margin-bottom:16px}
+.phase-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.phase-chip{
+  font-size:12px;padding:4px 10px;border-radius:12px;
+  border:1px solid var(--border);color:var(--muted);background:var(--panel-2);
+  transition:all .3s ease;
+}
+.phase-chip.active{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+#scene{width:100%;height:auto;display:block}
+
+/* SVG 元素颜色全部走 CSS 变量，随主题切换 */
+.node{cursor:pointer}
+.node-card{fill:var(--node-fill);stroke:var(--node-stroke);stroke-width:1.6;transition:fill .3s,stroke .3s}
+.node:hover .node-card{stroke-width:2.4}
+.node.selected .node-card{stroke-width:3}
+.node-title{fill:var(--text);font-size:18px;font-weight:600;text-anchor:middle}
+.node-sub{fill:var(--muted);font-size:12px;text-anchor:middle}
+.icon{fill:none;stroke:var(--icon);stroke-width:3;stroke-linecap:round;transition:stroke .3s}
+.icon-led{fill:var(--st-send)}
+.link{stroke:var(--link-down);stroke-width:3;stroke-dasharray:7 6;transition:stroke .3s}
+.link.link-up{stroke:var(--link-up);stroke-dasharray:none}
+.link-arrow{fill:var(--link-down);transition:fill .3s}
+.link-arrow.link-up{fill:var(--link-up)}
+.link-label{fill:var(--link-label);font-size:12px;text-anchor:middle}
+.status-dot{transition:fill .3s}
+.st-idle{fill:var(--st-idle)} .st-send{fill:var(--st-send)}
+.st-recv{fill:var(--st-recv)} .st-done{fill:var(--st-send)} .st-wait{fill:var(--st-wait)}
+.status-text{fill:var(--muted);font-size:12px}
+.flight-label{fill:var(--muted);font-size:12.5px;text-anchor:middle;opacity:0;transition:opacity .25s}
+.flight-label.show{opacity:1}
+.pkt{cursor:pointer}
+.pkt-cmd .pkt-box{fill:var(--cmd);stroke:var(--cmd-stroke)}
+.pkt-resp .pkt-box{fill:var(--resp);stroke:var(--resp-stroke)}
+.pkt-box{stroke-width:1.5;transition:fill .3s,stroke .3s}
+.pkt.selected .pkt-box{stroke-width:3}
+.pkt-text{fill:var(--cmd-text);font-size:13.5px;font-weight:600;text-anchor:middle}
+.pkt-resp .pkt-text{fill:var(--resp-text)}
+
+/* 三栏布局 */
+.columns{display:grid;grid-template-columns:minmax(260px,320px) 1fr minmax(290px,350px);gap:16px;align-items:start}
+@media (max-width:1080px){.columns{grid-template-columns:1fr 1fr}.col-info{grid-column:1/-1}}
+@media (max-width:720px){.columns{grid-template-columns:1fr}}
+
+/* 控制面板 */
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.btn{
+  flex:1;min-width:86px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:9px 12px;font-size:14px;cursor:pointer;border-radius:8px;
+  background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+  transition:background-color .2s,border-color .2s,color .3s;
+}
+.btn:hover:not(:disabled){border-color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.btn .ico{font-size:12px}
+.speed-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px}
+.speed-row input[type=range]{flex:1;accent-color:var(--accent)}
+.speed-row output{min-width:44px;text-align:right;color:var(--muted)}
+.progress-row{margin-bottom:4px;font-size:12.5px;color:var(--muted)}
+.progress{height:8px;border-radius:4px;background:var(--panel-2);border:1px solid var(--border);overflow:hidden;margin-top:5px}
+#progressFill{height:100%;width:0;background:var(--accent);transition:width .25s ease}
+
+/* 快捷键提示区 */
+.shortcuts ul{list-style:none;margin:0;padding:0}
+.shortcuts li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:12.5px}
+.shortcuts .desc{color:var(--muted);text-align:right}
+kbd{
+  display:inline-block;padding:2px 7px;font-size:11.5px;border-radius:6px;
+  background:var(--panel-2);border:1px solid var(--border);border-bottom-width:2.5px;color:var(--text);
+}
+.keys i{font-style:normal;color:var(--muted);margin:0 2px}
+.kbd-flash{animation:kbdPulse .42s ease-out}
+@keyframes kbdPulse{
+  0%{box-shadow:0 0 0 0 var(--accent)}
+  70%{box-shadow:0 0 0 8px transparent}
+  100%{box-shadow:0 0 0 0 transparent}
+}
+
+/* 步骤说明 + 终端记录 */
+.step-chip{display:inline-block;font-size:12px;padding:3px 10px;border-radius:12px;background:var(--panel-2);border:1px solid var(--border);color:var(--accent);margin-bottom:8px}
+.step-title{font-size:16.5px;font-weight:600;margin:0 0 6px}
+.step-detail{font-size:13.5px;line-height:1.75;margin:0 0 6px}
+.step-sim{font-size:12px;color:var(--st-wait);margin:0 0 4px}
+.log-box{
+  margin-top:10px;background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+  padding:10px 12px;max-height:240px;overflow:auto;font-size:13px;line-height:1.8;
+  transition:background-color .3s;
+}
+.log-line{cursor:pointer;border-radius:4px;padding:0 4px;white-space:pre-wrap;word-break:break-all}
+.log-line:hover{background:var(--panel-2)}
+.log-line.selected{background:var(--panel-2);outline:1px dashed var(--accent)}
+.role-c{color:var(--cmd-accent);font-weight:700}
+.role-s{color:var(--resp-accent);font-weight:700}
+.log-event{color:var(--muted);font-style:italic;text-align:center;cursor:pointer}
+.log-empty{color:var(--muted);text-align:center;font-style:italic}
+
+/* 信息面板 + 图例 */
+.info-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.chip{font-size:11.5px;padding:3px 9px;border-radius:10px;background:var(--panel-2);border:1px solid var(--border);color:var(--muted)}
+.chip.c{color:var(--cmd-accent);border-color:var(--cmd-accent)}
+.chip.s{color:var(--resp-accent);border-color:var(--resp-accent)}
+.kv{display:flex;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border);font-size:13px;line-height:1.6}
+.kv .k{flex:0 0 92px;color:var(--muted)}
+.kv .v{flex:1;word-break:break-all}
+pre.raw{
+  background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+  padding:8px 10px;font-size:12.5px;white-space:pre-wrap;word-break:break-all;color:var(--text);margin:4px 0 0;
+}
+.legend ul{list-style:none;margin:0;padding:0}
+.legend li{display:flex;align-items:center;gap:9px;padding:4.5px 0;font-size:12.5px;color:var(--muted)}
+.sw{width:16px;height:16px;border-radius:4px;flex:0 0 16px}
+.sw-cmd{background:var(--cmd)} .sw-resp{background:var(--resp)}
+.sw-dot{border-radius:50%}
+.sw-send{background:var(--st-send)} .sw-recv{background:var(--st-recv)}
+.sw-wait{background:var(--st-wait)} .sw-idle{background:var(--st-idle)} .sw-err{background:var(--st-err)}
+.sw-link{height:0;border-top:3px solid var(--link-up);border-radius:0}
+.sw-link-down{height:0;border-top:3px dashed var(--link-down);border-radius:0}
+
+.notes{max-width:1280px;margin:16px auto 0;font-size:12px;color:var(--muted);line-height:1.9}
+.notes b{color:var(--text)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+
+<!-- ======================= 标题区 ======================= -->
+<header class="app-header">
+  <div class="title-block">
+    <h1>SMTP 报文交换可交互动画演示</h1>
+    <p class="subtitle">《计算机网络：自顶向下方法》（第 8 版）· SMTP 客户（C）与服务器（S）交换报文文本的例子 · alpha.edu → beta.gov</p>
+  </div>
+  <!-- 主题切换按钮：文字标识“将要切换到”的目标主题 -->
+  <button type="button" id="themeToggle" class="theme-btn" title="切换深色 / 浅色主题（快捷键 T）">
+    <span id="themeIcon" aria-hidden="true">🌙</span><span id="themeLabel">深色模式</span>
+  </button>
+</header>
+
+<main>
+  <!-- ======================= 实验场景区 ======================= -->
+  <section class="panel scene-panel" aria-label="实验场景区">
+    <div class="phase-bar" id="phaseBar"></div>
+    <svg id="scene" viewBox="0 0 960 300" role="img" aria-label="SMTP 客户与服务器通信场景">
+      <!-- TCP 链路（位于节点卡片之后绘制） -->
+      <g id="gLink">
+        <line id="linkLine" class="link" x1="244" y1="165" x2="716" y2="165"/>
+        <polygon id="arrowR" class="link-arrow" points="700,159 714,165 700,171"/>
+        <polygon id="arrowL" class="link-arrow" points="260,159 246,165 260,171"/>
+        <text id="linkLabel" class="link-label" x="480" y="196">TCP 连接 · 端口 25（尚未建立）</text>
+        <text id="flightLabel" class="flight-label" x="480" y="222"></text>
+      </g>
+
+      <!-- 客户节点 C：alpha.edu -->
+      <g id="gClient" class="node" transform="translate(40,80)" tabindex="0" role="button"
+         aria-label="客户节点 alpha.edu，点击查看设备信息">
+        <title>alpha.edu — SMTP 客户（C），点击查看设备信息</title>
+        <rect class="node-card" width="200" height="170" rx="14"/>
+        <rect class="icon" x="66" y="22" width="68" height="44" rx="6"/>
+        <path class="icon" d="M100 66v10 M84 78h32"/>
+        <text class="node-title" x="100" y="104">alpha.edu</text>
+        <text class="node-sub"   x="100" y="124">SMTP 客户（C）· 发件主机</text>
+        <text class="node-sub"   x="100" y="141">临时端口（简化演示）</text>
+        <circle id="dotC" class="status-dot st-idle" cx="22" cy="156" r="5"/>
+        <text id="stC" class="status-text" x="32" y="160">空闲</text>
+      </g>
+
+      <!-- 服务器节点 S：beta.gov -->
+      <g id="gServer" class="node" transform="translate(720,80)" tabindex="0" role="button"
+         aria-label="服务器节点 beta.gov，点击查看设备信息">
+        <title>beta.gov — SMTP 服务器（S），端口 25，点击查看设备信息</title>
+        <rect class="node-card" width="200" height="170" rx="14"/>
+        <rect class="icon" x="68" y="20" width="64" height="14" rx="3"/>
+        <rect class="icon" x="68" y="38" width="64" height="14" rx="3"/>
+        <rect class="icon" x="68" y="56" width="64" height="14" rx="3"/>
+        <circle class="icon-led" cx="124" cy="27" r="2.5"/>
+        <circle class="icon-led" cx="124" cy="45" r="2.5"/>
+        <circle class="icon-led" cx="124" cy="63" r="2.5"/>
+        <text class="node-title" x="100" y="104">beta.gov</text>
+        <text class="node-sub"   x="100" y="124">SMTP 服务器（S）· 收件主机</text>
+        <text class="node-sub"   x="100" y="141">熟知端口：25</text>
+        <circle id="dotS" class="status-dot st-idle" cx="22" cy="156" r="5"/>
+        <text id="stS" class="status-text" x="32" y="160">空闲</text>
+      </g>
+
+      <!-- 数据包图层（JS 动态生成） -->
+      <g id="pktLayer"></g>
+    </svg>
+  </section>
+
+  <!-- ======================= 三栏：控制 / 说明 / 信息 ======================= -->
+  <div class="columns">
+
+    <!-- 控制面板 + 快捷键提示区 -->
+    <section class="panel col-ctrl" aria-label="控制面板">
+      <h2>控制面板</h2>
+      <div class="btn-row">
+        <button type="button" id="btnPlay" class="btn primary" title="播放 / 暂停（快捷键：空格）">
+          <span class="ico" id="playIco">▶</span><span id="playLabel">播放</span>
+        </button>
+        <button type="button" id="btnStep" class="btn" title="单步执行（快捷键：S 或 →）">
+          <span class="ico">⏭</span>单步
+        </button>
+        <button type="button" id="btnReset" class="btn" title="重置（快捷键：R）">
+          <span class="ico">↺</span>重置
+        </button>
+      </div>
+      <div class="speed-row">
+        <label for="speedRange">速度</label>
+        <input type="range" id="speedRange" min="0.5" max="3" step="0.25" value="1"
+               aria-label="动画速度调节">
+        <output id="speedOut" for="speedRange">1.0×</output>
+      </div>
+      <div class="progress-row">
+        <span id="stepCounter">未开始 · 共 15 步</span>
+        <div class="progress"><div id="progressFill"></div></div>
+      </div>
+      <div class="shortcuts" id="shortcutArea">
+        <h3>键盘快捷键</h3>
+        <ul id="shortcutList"></ul>
+      </div>
+    </section>
+
+    <!-- 当前步骤说明区 + 终端记录 -->
+    <section class="panel col-step" aria-label="当前步骤说明">
+      <h2>当前步骤说明</h2>
+      <div aria-live="polite">
+        <span class="step-chip" id="phaseChip">就绪</span>
+        <p class="step-title" id="stepTitle">SMTP 报文交换演示</p>
+        <p class="step-detail" id="stepDetail">
+          点击「播放」或按空格键开始连续演示；点击「单步」或按 S / → 逐步观察每一条命令与应答。
+          点击节点、数据包或下方记录行可查看详细字段。
+        </p>
+        <p class="step-sim" id="stepSim"></p>
+      </div>
+      <h3>报文交互记录（终端视角）</h3>
+      <div class="log-box mono" id="logBox">
+        <div class="log-empty">—— 交互记录为空，点击「播放」开始 ——</div>
+      </div>
+    </section>
+
+    <!-- 信息面板 + 图例区 -->
+    <section class="panel col-info" aria-label="信息面板与图例">
+      <h2>信息面板</h2>
+      <div id="infoBody">
+        <p class="step-detail" style="color:var(--muted)">
+          点击场景中的 <b>节点</b>、飞行或停靠的 <b>数据包</b>、以及记录区中的
+          <b>报文行</b>，可在此查看设备信息或报文关键字段。
+        </p>
+      </div>
+      <div class="legend">
+        <h3>图例</h3>
+        <ul>
+          <li><span class="sw sw-cmd"></span>命令报文（客户 C → 服务器 S）</li>
+          <li><span class="sw sw-resp"></span>应答报文（服务器 S → 客户 C）</li>
+          <li><span class="sw sw-link"></span>TCP 连接已建立（端口 25）</li>
+          <li><span class="sw sw-link-down"></span>连接未建立 / 已释放</li>
+          <li><span class="sw sw-dot sw-send"></span>发送中（绿）</li>
+          <li><span class="sw sw-dot sw-recv"></span>接收中（蓝）</li>
+          <li><span class="sw sw-dot sw-wait"></span>等待 / 处理（黄，本例不出现）</li>
+          <li><span class="sw sw-dot sw-idle"></span>空闲（灰）</li>
+          <li><span class="sw sw-dot sw-err"></span>错误（红，本例无错误场景）</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <!-- 教学说明与简化声明 -->
+  <footer class="notes">
+    <b>教学说明与简化声明：</b>
+    本页为教学演示工具，协议文本取自《计算机网络：自顶向下方法》（第 8 版）“SMTP in Action”例子。
+    ① TCP 三次握手 / 四次挥手过程省略，仅表现连接建立与关闭（简化演示）；
+    ② 教材例子通过 telnet 手工连接服务器 25 端口，此处不模拟 telnet 协商（简化演示）；
+    ③ 实际 SMTP 以 CRLF 为行结束符，结束数据标志为 &lt;CRLF&gt;.&lt;CRLF&gt;，页面不逐字符显示（简化演示）；
+    ④ 不展示点填充（dot-stuffing）、客户临时端口、用户代理撰写与收件人读取邮件的过程（简化演示）；
+    ⑤ 飞行动画仅表示报文先后顺序，不代表真实时延。现代实践中常用 EHLO 与扩展，本例按教材使用 HELO。
+  </footer>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ==========================================================
+     一、协议数据与实验步骤（修改 STEPS 即可更换实验流程）
+     每一步字段说明：
+       kind  : 'event'（场景事件，无报文飞行）或 'msg'（报文）
+       from  : 'C' | 'S'（报文发起方）
+       cmd   : 命令字（C 方报文）
+       code  : 应答码（S 方报文）
+       label : 数据包上的简短标签
+       text  : 报文原文（多行用 \n 分隔）
+       note  : 步骤说明文字
+       sim   : 简化声明（可选）
+     ========================================================== */
+  const REPLY_MEANING = {
+    220: '服务就绪（服务器问候）',
+    250: '所请求的邮件动作已完成',
+    354: '中间应答：开始输入邮件内容，以单独一行 “.” 结束',
+    221: '服务器同意关闭连接'
+  };
+
+  const PHASES = [
+    { name: '① 连接建立',          from: 0,  to: 1  },
+    { name: '② 邮件事务（信封）',   from: 2,  to: 7  },
+    { name: '③ 邮件内容（DATA）',  from: 8,  to: 11 },
+    { name: '④ 连接释放',          from: 12, to: 14 }
+  ];
+
+  const STEPS = [
+    { kind: 'event', id: 'connect',
+      title: '建立 TCP 连接',
+      detail: '位于 alpha.edu 的用户与服务器 beta.gov 的 25 端口建立 TCP 连接（教材例子使用 telnet 手工连接）。SMTP 运行在 TCP 之上，使用持久连接。',
+      sim: '简化演示：省略 TCP 三次握手与 telnet 协商过程。' },
+    { kind: 'msg', from: 'S', code: 220, label: '220 问候',
+      text: '220 beta.gov simple mail transfer service ready',
+      note: '连接建立后，服务器主动发送问候，表示邮件传输服务已就绪。220 = 服务就绪。' },
+    { kind: 'msg', from: 'C', cmd: 'HELO', label: 'HELO',
+      text: 'HELO alpha.edu',
+      note: '客户向服务器问好并自报主机名 alpha.edu，开始 SMTP 会话。（现代扩展常用 EHLO，此处按教材例子使用 HELO。）' },
+    { kind: 'msg', from: 'S', code: 250, label: '250 OK',
+      text: '250 beta.gov',
+      note: '服务器确认收到 HELO，并返回自己的域名。250 = 所请求的邮件动作已完成。' },
+    { kind: 'msg', from: 'C', cmd: 'MAIL FROM', label: 'MAIL FROM',
+      text: 'MAIL FROM: <smith@alpha.edu>',
+      note: '邮件事务开始：声明发件人（信封发件人）。该命令只传递信封信息，不传邮件内容。' },
+    { kind: 'msg', from: 'S', code: 250, label: '250 OK',
+      text: '250 OK',
+      note: '服务器确认接受该发件人。' },
+    { kind: 'msg', from: 'C', cmd: 'RCPT TO', label: 'RCPT TO',
+      text: 'RCPT TO: <jones@beta.gov>',
+      note: '声明收件人（信封收件人）。若有多个收件人，需要重复发送该命令。' },
+    { kind: 'msg', from: 'S', code: 250, label: '250 OK',
+      text: '250 OK',
+      note: '服务器确认接受该收件人。' },
+    { kind: 'msg', from: 'C', cmd: 'DATA', label: 'DATA',
+      text: 'DATA',
+      note: '客户请求开始传送邮件内容。' },
+    { kind: 'msg', from: 'S', code: 354, label: '354 继续',
+      text: '354 Start mail input; end with <CRLF>.<CRLF>',
+      note: '354 为中间应答：请开始输入邮件内容，并以仅含 “.” 的一行（后跟 CRLF）作为结束。' },
+    { kind: 'msg', from: 'C', data: true, label: '邮件内容',
+      text: 'Do you like ketchup?\nHow about pickles?\n.',
+      note: '客户逐行发送邮件内容；最后单独一行 “.” 表示内容结束，服务器据此知道数据传送完毕。',
+      sim: '简化演示：页面不显示 CRLF，也不展示点填充（dot-stuffing）转义。' },
+    { kind: 'msg', from: 'S', code: 250, label: '250 OK',
+      text: '250 OK',
+      note: '服务器确认已接收该邮件（本例不展示服务器后续的存储与投递过程）。' },
+    { kind: 'msg', from: 'C', cmd: 'QUIT', label: 'QUIT',
+      text: 'QUIT',
+      note: '客户请求关闭 SMTP 会话。' },
+    { kind: 'msg', from: 'S', code: 221, label: '221 告别',
+      text: '221 beta.gov closing connection',
+      note: '221 = 服务器同意关闭连接，本次会话结束。' },
+    { kind: 'event', id: 'closed',
+      title: 'TCP 连接关闭',
+      detail: '至此完成一次完整的 SMTP 会话：连接建立 → 邮件事务（HELO / MAIL FROM / RCPT TO）→ 内容传输（DATA）→ 连接释放（QUIT）。SMTP 使用持久连接，可在同一连接上连续发送多封邮件。',
+      sim: '简化演示：省略 TCP 连接释放的挥手过程。' }
+  ];
+
+  const NODE_INFO = {
+    C: { title: 'alpha.edu — SMTP 客户（C）', rows: [
+      ['主机名', 'alpha.edu'],
+      ['角色', 'SMTP 客户（发送方主机）'],
+      ['行为', '主动向服务器 25 端口发起 TCP 连接并发送命令'],
+      ['示例发件人', 'smith@alpha.edu'],
+      ['使用的命令', 'HELO · MAIL FROM · RCPT TO · DATA · QUIT'],
+      ['简化说明', '客户临时端口号与用户代理（撰写邮件）未在页面展示']
+    ]},
+    S: { title: 'beta.gov — SMTP 服务器（S）', rows: [
+      ['主机名', 'beta.gov'],
+      ['角色', 'SMTP 服务器（接收方主机）'],
+      ['监听端口', '25（SMTP 熟知端口）'],
+      ['示例收件人', 'jones@beta.gov'],
+      ['使用的应答码', '220 · 250 · 354 · 221'],
+      ['后续行为', '接收邮件后等待收件人通过邮件阅读器读取（本例不展示）']
+    ]}
+  };
+
+  /* ==========================================================
+     二、动画参数与常量
+     ========================================================== */
+  const N = STEPS.length;
+  const BASE_FLIGHT_MS = 1500;   // 1× 速度下报文飞行时长
+  const BASE_DWELL_MS  = 700;    // 1× 速度下两步之间的停顿
+  const FLY_Y = 128, ARC = 22;   // 飞行基线高度与弧线高度
+  const PATH = { c2s: { from: 300, to: 660 }, s2c: { from: 660, to: 300 } };
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const REDUCED = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches; // 系统减少动态效果
+  const SPEED = { v: 1 };
+
+  /* ==========================================================
+     三、DOM 引用与动画状态
+     ========================================================== */
+  const $ = function (id) { return document.getElementById(id); };
+  const els = {
+    scene: $('scene'), pktLayer: $('pktLayer'),
+    gClient: $('gClient'), gServer: $('gServer'),
+    dotC: $('dotC'), dotS: $('dotS'), stC: $('stC'), stS: $('stS'),
+    linkLine: $('linkLine'), arrowL: $('arrowL'), arrowR: $('arrowR'),
+    linkLabel: $('linkLabel'), flightLabel: $('flightLabel'),
+    phaseBar: $('phaseBar'), phaseChip: $('phaseChip'),
+    stepTitle: $('stepTitle'), stepDetail: $('stepDetail'), stepSim: $('stepSim'),
+    logBox: $('logBox'), infoBody: $('infoBody'),
+    btnPlay: $('btnPlay'), btnStep: $('btnStep'), btnReset: $('btnReset'),
+    playIco: $('playIco'), playLabel: $('playLabel'),
+    speedRange: $('speedRange'), speedOut: $('speedOut'),
+    stepCounter: $('stepCounter'), progressFill: $('progressFill'),
+    shortcutList: $('shortcutList'),
+    themeToggle: $('themeToggle'), themeIcon: $('themeIcon'), themeLabel: $('themeLabel')
+  };
+
+  // 动画状态机（唯一事实来源）
+  const anim = {
+    idx: -1,            // 当前（进行中或已完成）步骤索引
+    playing: false,     // 是否连续播放
+    single: false,      // 单步模式：本步结束后自动暂停
+    flight: null,       // 飞行中的报文 {el,step,dir,from,to,dur,progress,start}
+    dwellTimer: null,   // 步间停顿定时器
+    pendingNext: false, // 暂停时记下的“待进入下一步”
+    lastPkt: null,      // 最近停靠、可点击的数据包
+    rafId: null,
+    busy: false         // 重置保护窗口（期间忽略单步等操作）
+  };
+
+  const NODE_STATE = {
+    idle:      ['st-idle', '空闲'],
+    sending:   ['st-send', '发送中'],
+    receiving: ['st-recv', '接收中'],
+    done:      ['st-done', '完成']
+  };
+
+  /* ==========================================================
+     四、主题管理（封装为独立函数）
+     ========================================================== */
+  const THEME_KEY = 'smtp-demo-theme';
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
+  function getPreferredTheme() {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === 'dark' || saved === 'light') return saved;
+    } catch (e) { /* localStorage 不可用时静默降级 */ }
+    return (window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* 忽略 */ }
+    refreshThemeButton();
+  }
+  function toggleTheme() {
+    applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  }
+  function refreshThemeButton() {
+    // 按钮文字标识“将要切换到”的目标主题
+    const dark = currentTheme() === 'dark';
+    els.themeIcon.textContent  = dark ? '☀️' : '🌙';
+    els.themeLabel.textContent = dark ? '浅色模式' : '深色模式';
+    els.themeToggle.setAttribute('aria-label', dark ? '切换到浅色模式' : '切换到深色模式');
+  }
+
+  /* ==========================================================
+     五、场景辅助：状态、链路、阶段、进度、说明区
+     ========================================================== */
+  function phaseOf(i) {
+    return PHASES.findIndex(function (p) { return i >= p.from && i <= p.to; });
+  }
+  function setNodeState(node, key) {
+    const st = NODE_STATE[key];
+    (node === 'C' ? els.dotC : els.dotS).setAttribute('class', 'status-dot ' + st[0]);
+    (node === 'C' ? els.stC  : els.stS ).textContent = st[1];
+  }
+  function setLink(up) {
+    els.linkLine.classList.toggle('link-up', up);
+    els.arrowL.classList.toggle('link-up', up);
+    els.arrowR.classList.toggle('link-up', up);
+    els.linkLabel.textContent = up
+      ? 'TCP 连接 · 端口 25（已建立，持久连接）'
+      : 'TCP 连接 · 端口 25（尚未建立）';
+  }
+  function updateFlightLabel(step) {
+    if (!step) { els.flightLabel.classList.remove('show'); els.flightLabel.textContent = ''; return; }
+    const dir = step.from === 'C' ? 'C → S' : 'S → C';
+    els.flightLabel.textContent = dir + ': ' + step.text.replace(/\n/g, ' ⏎ ');
+    els.flightLabel.classList.add('show');
+  }
+  function updatePhaseBar() {
+    const cur = anim.idx >= 0 ? phaseOf(anim.idx) : -1;
+    Array.prototype.forEach.call(els.phaseBar.children, function (chip, i) {
+      chip.classList.toggle('active', i === cur);
+    });
+  }
+  function updateStepPanel() {
+    const i = anim.idx;
+    if (i < 0) {
+      els.phaseChip.textContent = '就绪';
+      els.stepTitle.textContent = 'SMTP 报文交换演示';
+      els.stepDetail.textContent = '点击「播放」或按空格键开始连续演示；点击「单步」或按 S / → 逐步观察每一条命令与应答。点击节点、数据包或下方记录行可查看详细字段。';
+      els.stepSim.textContent = '';
+      return;
+    }
+    const s = STEPS[i];
+    els.phaseChip.textContent = PHASES[phaseOf(i)].name;
+    els.stepTitle.textContent = s.kind === 'event'
+      ? s.title
+      : (s.from === 'C' ? 'C → S · ' : 'S → C · ') + s.label;
+    els.stepDetail.textContent = s.kind === 'event' ? s.detail : s.note;
+    els.stepSim.textContent = s.sim || '';
+  }
+  function updateProgress() {
+    const done = anim.idx < 0 ? 0 : (anim.idx + 1) / N * 100;
+    els.progressFill.style.width = done + '%';
+    els.stepCounter.textContent = anim.idx < 0
+      ? '未开始 · 共 ' + N + ' 步'
+      : '步骤 ' + (anim.idx + 1) + ' / ' + N;
+  }
+  function isEnded() {
+    return anim.idx >= N - 1 && !anim.flight;
+  }
+  function updateTransportUI() {
+    els.playIco.textContent = anim.playing ? '⏸' : '▶';
+    els.playLabel.textContent = anim.playing ? '暂停' : (isEnded() ? '重播' : '播放');
+    els.btnStep.disabled = anim.busy || isEnded();
+    els.btnReset.disabled = anim.busy || (anim.idx < 0 && !anim.flight);
+  }
+
+  /* ==========================================================
+     六、终端记录（报文交互记录）
+     ========================================================== */
+  function appendLog(i) {
+    const s = STEPS[i];
+    if (s.kind === 'event') {
+      const d = document.createElement('div');
+      d.className = 'log-line log-event';
+      d.dataset.step = i;
+      d.title = '点击查看该事件详情';
+      d.textContent = '—— ' + s.title + ' ——';
+      els.logBox.appendChild(d);
+    } else {
+      s.text.split('\n').forEach(function (line) {
+        const d = document.createElement('div');
+        d.className = 'log-line';
+        d.dataset.step = i;
+        d.title = '点击查看该报文字段';
+        const role = document.createElement('span');
+        role.className = 'role ' + (s.from === 'C' ? 'role-c' : 'role-s');
+        role.textContent = s.from + ':';
+        d.appendChild(role);
+        d.appendChild(document.createTextNode(' ' + line));
+        els.logBox.appendChild(d);
+      });
+    }
+    els.logBox.scrollTop = els.logBox.scrollHeight;
+  }
+  function resetLog() {
+    els.logBox.innerHTML = '<div class="log-empty">—— 交互记录为空，点击「播放」开始 ——</div>';
+  }
+
+  /* ==========================================================
+     七、信息面板（节点信息 / 数据包字段）
+     ========================================================== */
+  function esc(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function kv(k, v) {
+    return '<div class="kv"><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';
+  }
+  function clearSelection() {
+    els.scene.querySelectorAll('.selected').forEach(function (el) { el.classList.remove('selected'); });
+    els.logBox.querySelectorAll('.selected').forEach(function (el) { el.classList.remove('selected'); });
+  }
+  function showNodeInfo(which) {
+    clearSelection();
+    (which === 'C' ? els.gClient : els.gServer).classList.add('selected');
+    const info = NODE_INFO[which];
+    els.infoBody.innerHTML =
+      '<div class="info-chips"><span class="chip ' + (which === 'C' ? 'c' : 's') + '">设备信息</span></div>' +
+      '<div class="kv"><span class="k">节点</span><span class="v"><b>' + esc(info.title) + '</b></span></div>' +
+      info.rows.map(function (r) { return kv(r[0], r[1]); }).join('');
+  }
+  function showStepInfo(i) {
+    const s = STEPS[i];
+    let html = '';
+    if (s.kind === 'event') {
+      html += '<div class="info-chips"><span class="chip">场景事件</span>' +
+              '<span class="chip">' + PHASES[phaseOf(i)].name + '</span></div>';
+      html += kv('事件', s.title) + kv('说明', s.detail);
+      if (s.sim) html += kv('简化说明', s.sim);
+    } else {
+      const isC = s.from === 'C';
+      html += '<div class="info-chips">' +
+        '<span class="chip ' + (isC ? 'c' : 's') + '">' + (isC ? '命令报文 C → S' : '应答报文 S → C') + '</span>' +
+        '<span class="chip">' + (isC ? '命令：' + s.cmd : '应答码：' + s.code) + '</span>' +
+        '<span class="chip">' + PHASES[phaseOf(i)].name + '</span></div>';
+      html += kv('方向', isC ? 'C → S（客户发送命令）' : 'S → C（服务器应答）');
+      if (isC) html += kv('命令字', s.cmd);
+      else html += kv('应答码含义', s.code + ' · ' + (REPLY_MEANING[s.code] || ''));
+      html += kv('承载', 'TCP 连接 · 服务器端口 25');
+      html += '<div class="kv"><span class="k">报文原文</span><span class="v">' +
+              '<pre class="raw">' + esc(s.text) + '</pre></span></div>';
+      html += kv('说明', s.note);
+      if (s.sim) html += kv('简化说明', s.sim);
+    }
+    els.infoBody.innerHTML = html;
+  }
+  function selectByStep(i) {
+    clearSelection();
+    els.logBox.querySelectorAll('.log-line[data-step="' + i + '"]').forEach(function (el) {
+      el.classList.add('selected');
+    });
+    if (anim.lastPkt && Number(anim.lastPkt.dataset.step) === i) {
+      anim.lastPkt.classList.add('selected');
+    }
+    showStepInfo(i);
+  }
+
+  /* ==========================================================
+     八、数据包（SVG 动态创建）
+     ========================================================== */
+  function removeLastPkt() {
+    if (anim.lastPkt) { anim.lastPkt.remove(); anim.lastPkt = null; }
+  }
+  function spawnPacket(i) {
+    removeLastPkt();
+    const s = STEPS[i];
+    const g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('class', 'pkt ' + (s.from === 'C' ? 'pkt-cmd' : 'pkt-resp'));
+    g.dataset.step = i;
+    const rect = document.createElementNS(SVGNS, 'rect');
+    rect.setAttribute('class', 'pkt-box');
+    rect.setAttribute('rx', 9);
+    rect.setAttribute('height', 40);
+    rect.setAttribute('y', -20);
+    const txt = document.createElementNS(SVGNS, 'text');
+    txt.setAttribute('class', 'pkt-text');
+    txt.setAttribute('y', 5);
+    txt.textContent = s.label;
+    g.appendChild(rect); g.appendChild(txt);
+    els.pktLayer.appendChild(g);
+    // 先测量文字宽度，再确定底框宽度
+    const w = Math.max(120, txt.getComputedTextLength() + 36);
+    rect.setAttribute('width', w);
+    rect.setAttribute('x', -w / 2);
+    g.addEventListener('click', function () { selectByStep(i); });
+
+    const dir = s.from === 'C' ? 'c2s' : 's2c';
+    anim.flight = {
+      el: g, step: i, dir: dir,
+      from: PATH[dir].from, to: PATH[dir].to,
+      dur: BASE_FLIGHT_MS / SPEED.v, progress: 0,
+      start: performance.now()
+    };
+    g.setAttribute('transform', 'translate(' + anim.flight.from + ',' + FLY_Y + ')');
+  }
+  function easeInOut(p) { return p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; }
+  function positionPacket(f) {
+    const p = easeInOut(f.progress);
+    const x = f.from + (f.to - f.from) * p;
+    const y = FLY_Y - Math.sin(Math.PI * f.progress) * ARC;
+    f.el.setAttribute('transform', 'translate(' + x + ',' + y + ')');
+  }
+
+  /* ==========================================================
+     九、动画状态机
+     ========================================================== */
+  function ensureRaf() {
+    if (!anim.rafId) anim.rafId = requestAnimationFrame(tick);
+  }
+  function tick(now) {
+    if (!anim.playing) { anim.rafId = null; return; }
+    const f = anim.flight;
+    if (f) {
+      f.progress = Math.min(1, (now - f.start) / f.dur);
+      positionPacket(f);
+      if (f.progress >= 1) landFlight();
+    }
+    anim.rafId = anim.playing ? requestAnimationFrame(tick) : null;
+  }
+  function applyEvent(s) {
+    if (s.id === 'connect') {
+      setLink(true); setNodeState('C', 'idle'); setNodeState('S', 'idle');
+    } else if (s.id === 'closed') {
+      setLink(false); setNodeState('C', 'done'); setNodeState('S', 'done');
+    }
+    appendLog(anim.idx);
+  }
+  function beginStep(i) {
+    anim.idx = i;
+    const s = STEPS[i];
+    updateStepPanel(); updatePhaseBar(); updateProgress(); updateTransportUI();
+    if (s.kind === 'event') {
+      applyEvent(s);
+      if (anim.playing) scheduleDwell();
+      return;
+    }
+    if (s.from === 'C') { setNodeState('C', 'sending'); setNodeState('S', 'receiving'); }
+    else                { setNodeState('S', 'sending'); setNodeState('C', 'receiving'); }
+    updateFlightLabel(s);
+    spawnPacket(i);
+    ensureRaf();
+  }
+  function landFlight() {
+    const f = anim.flight;
+    if (!f) return;
+    f.progress = 1;
+    positionPacket(f);
+    anim.flight = null;
+    anim.lastPkt = f.el;          // 停靠保留，可点击查看字段
+    appendLog(f.step);
+    setNodeState('C', 'idle');
+    setNodeState('S', 'idle');
+    updateFlightLabel(null);
+    updateTransportUI();
+    if (anim.idx >= N - 1) { finishSequence(); return; }
+    if (anim.playing) scheduleDwell();
+  }
+  function scheduleDwell() {
+    clearTimeout(anim.dwellTimer);
+    anim.dwellTimer = setTimeout(function () {
+      anim.dwellTimer = null;
+      if (!anim.playing) return;
+      if (anim.single) {           // 单步模式：完成本步即暂停
+        anim.playing = false; anim.single = false;
+        updateTransportUI(); return;
+      }
+      if (anim.idx >= N - 1) { finishSequence(); return; }
+      beginStep(anim.idx + 1);
+    }, BASE_DWELL_MS / SPEED.v);
+  }
+  function finishSequence() {
+    anim.playing = false; anim.single = false;
+    setNodeState('C', 'done'); setNodeState('S', 'done');
+    setLink(false);
+    updateFlightLabel(null);
+    updateTransportUI();
+  }
+
+  /* ==========================================================
+     十、控制函数（按钮与快捷键共用同一套实现）
+     ========================================================== */
+  function playPause() {
+    if (anim.busy) return;
+    if (anim.playing) {                       // —— 暂停 ——
+      anim.playing = false;
+      if (anim.dwellTimer) {                  // 停顿中暂停：记住待进入下一步
+        clearTimeout(anim.dwellTimer);
+        anim.dwellTimer = null;
+        anim.pendingNext = anim.idx < N - 1;
+      }
+      updateTransportUI();
+      return;
+    }
+    if (isEnded()) resetDemo();               // 结束后再按播放 = 重播
+    anim.playing = true;
+    anim.single = false;
+    if (anim.flight) {                        // 恢复被暂停的飞行
+      anim.flight.dur = BASE_FLIGHT_MS / SPEED.v;
+      anim.flight.start = performance.now() - anim.flight.progress * anim.flight.dur;
+    } else {                                  // 从当前位置推进下一步
+      anim.pendingNext = false;
+      if (anim.idx < N - 1) beginStep(anim.idx + 1);
+      else { finishSequence(); }
+    }
+    ensureRaf();
+    updateTransportUI();
+  }
+  function stepOnce() {
+    if (anim.busy) return;                    // 重置窗口内忽略单步
+    if (anim.flight) {                        // 动画进行中：立即完成当前这一步
+      anim.single = true;
+      landFlight();
+      updateTransportUI();
+      return;
+    }
+    if (anim.idx >= N - 1) return;            // 已结束
+    anim.playing = true;
+    anim.single = true;                       // 单步模式：该步结束后自动暂停
+    anim.pendingNext = false;
+    beginStep(anim.idx + 1);
+  }
+  function resetDemo() {
+    if (anim.rafId) { cancelAnimationFrame(anim.rafId); anim.rafId = null; }
+    clearTimeout(anim.dwellTimer); anim.dwellTimer = null;
+    removeLastPkt();
+    els.pktLayer.innerHTML = '';
+    anim.idx = -1; anim.playing = false; anim.single = false;
+    anim.flight = null; anim.pendingNext = false;
+    setLink(false);
+    setNodeState('C', 'idle'); setNodeState('S', 'idle');
+    resetLog();
+    updateFlightLabel(null);
+    updateStepPanel(); updatePhaseBar(); updateProgress(); updateTransportUI();
+    // 重置保护窗口：短时间内忽略单步等操作，避免状态竞争
+    anim.busy = true;
+    setTimeout(function () { anim.busy = false; updateTransportUI(); }, 250);
+  }
+  function updateSpeed(v) {
+    SPEED.v = v;
+    if (anim.flight) {                        // 保持当前进度，重算剩余时长
+      anim.flight.dur = BASE_FLIGHT_MS / SPEED.v;
+      if (anim.playing) {
+        anim.flight.start = performance.now() - anim.flight.progress * anim.flight.dur;
+      }
+    }
+  }
+  function updateSpeedUI() {
+    els.speedOut.textContent = SPEED.v.toFixed(2).replace(/\.?0+$/, '') + '×';
+    els.speedOut.textContent = SPEED.v.toFixed(SPEED.v % 1 ? 2 : 1) + '×';
+  }
+
+  /* ==========================================================
+     十一、键盘快捷键（独立封装，与按钮复用同一控制函数）
+     ========================================================== */
+  const SHORTCUTS = [
+    { codes: ['Space'],                keys: ['Space'],      desc: '播放 / 暂停',      action: 'play'  },
+    { codes: ['KeyS', 'ArrowRight'],   keys: ['S', '→'],     desc: '单步执行',         action: 'step'  },
+    { codes: ['KeyR'],                 keys: ['R'],           desc: '重置动画',         action: 'reset' },
+    { codes: ['KeyT'],                 keys: ['T'],           desc: '切换深色/浅色主题', action: 'theme' }
+  ];
+  const ACTION_FN  = { play: playPause, step: stepOnce, reset: resetDemo, theme: toggleTheme };
+  const ACTION_BTN = { play: 'btnPlay', step: 'btnStep', reset: 'btnReset', theme: 'themeToggle' };
+
+  function isEditableTarget(t) {
+    if (!t) return false;
+    if (t.isContentEditable) return true;                     // contenteditable 元素
+    const tag = (t.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select';
+  }
+  function flashButton(el) {
+    if (!el) return;
+    el.classList.remove('kbd-flash');
+    void el.offsetWidth;                                      // 强制重排以重启动画
+    el.classList.add('kbd-flash');
+    setTimeout(function () { el.classList.remove('kbd-flash'); }, 430);
+  }
+  function flashAction(action) {
+    flashButton($(ACTION_BTN[action]));
+  }
+  function renderShortcutList() {
+    els.shortcutList.innerHTML = SHORTCUTS.map(function (s) {
+      const keys = s.keys.map(function (k) { return '<kbd>' + k + '</kbd>'; }).join('<i>/</i>');
+      return '<li><span class="keys">' + keys + '</span><span class="desc">' + s.desc + '</span></li>';
+    }).join('');
+  }
+  function bindShortcuts() {
+    // 按键 → 动作 映射表（便于扩展）
+    const codeMap = {};
+    SHORTCUTS.forEach(function (s) {
+      s.codes.forEach(function (c) { codeMap[c] = s.action; });
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.repeat) return;                               // 忽略长按重复触发
+      if (event.ctrlKey || event.metaKey || event.altKey) return; // 不干扰浏览器组合键
+      if (isEditableTarget(event.target)) return;             // 焦点在输入控件时失效
+      const action = codeMap[event.code];
+      if (!action) return;
+      // 空格与方向键必须阻止默认行为（如页面滚动）
+      if (event.code === 'Space' || event.code.indexOf('Arrow') === 0) {
+        event.preventDefault();
+      }
+      flashAction(action);                                    // 轻量视觉反馈
+      ACTION_FN[action]();                                    // 与按钮点击完全一致
+    });
+  }
+
+  /* ==========================================================
+     十二、事件绑定与初始化
+     ========================================================== */
+  function bindControls() {
+    els.btnPlay.addEventListener('click', playPause);
+    els.btnStep.addEventListener('click', stepOnce);
+    els.btnReset.addEventListener('click', resetDemo);
+    els.themeToggle.addEventListener('click', toggleTheme);
+    els.speedRange.addEventListener('input', function () {
+      updateSpeed(parseFloat(els.speedRange.value));
+      updateSpeedUI();
+    });
+    // 节点点击 → 设备信息
+    els.gClient.addEventListener('click', function () { showNodeInfo('C'); });
+    els.gServer.addEventListener('click', function () { showNodeInfo('S'); });
+    [els.gClient, els.gServer].forEach(function (g) {
+      g.addEventListener('keydown', function (e) {
+        if (e.code === 'Enter') { e.preventDefault(); showNodeInfo(g === els.gClient ? 'C' : 'S'); }
+      });
+    });
+    // 记录行点击 → 报文字段（事件委托）
+    els.logBox.addEventListener('click', function (e) {
+      const line = e.target.closest('.log-line');
+      if (line && line.dataset.step !== undefined) selectByStep(Number(line.dataset.step));
+    });
+  }
+  function init() {
+    // 阶段条
+    els.phaseBar.innerHTML = PHASES.map(function (p) {
+      return '<span class="phase-chip">' + p.name + '</span>';
+    }).join('');
+    updateSpeed(parseFloat(els.speedRange.value));
+    updateSpeedUI();
+    bindControls();
+    renderShortcutList();
+    bindShortcuts();
+    refreshThemeButton();
+    updateStepPanel(); updatePhaseBar(); updateProgress(); updateTransportUI();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
