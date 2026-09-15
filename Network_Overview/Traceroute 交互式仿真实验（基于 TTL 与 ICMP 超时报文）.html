@@ -1,49 +1,239 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Traceroute 交互式仿真实验</title>
 <style>
-  * { box-sizing: border-box; }
+:root {
+  color-scheme: light;
+
+  --bg: #f4f6f8;
+  --panel-bg: #ffffff;
+  --text: #1a202c;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .12);
+
+  --btn-bg: #2563eb;
+  --btn-text: #ffffff;
+  --btn-secondary: #64748b;
+  --btn-disabled: #94a3b8;
+  --btn-disabled-text: #ffffff;
+
+  --theme-btn-bg: #ffffff;
+  --theme-btn-border: #cbd5e1;
+
+  --canvas-bg: #f8fafc;
+  --table-head: #eef2ff;
+
+  --log-bg: #ffffff;
+  --log-text: #334155;
+  --log-probe: #1d4ed8;
+  --log-expire: #b91c1c;
+  --log-reply: #b45309;
+  --log-record: #15803d;
+  --log-info: #334155;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0f172a;
+  --panel-bg: #111827;
+  --text: #e2e8f0;
+  --muted: #cbd5e1;
+  --border: #334155;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .45);
+
+  --btn-bg: #3b82f6;
+  --btn-text: #ffffff;
+  --btn-secondary: #475569;
+  --btn-disabled: #475569;
+  --btn-disabled-text: #cbd5e1;
+
+  --theme-btn-bg: #1e293b;
+  --theme-btn-border: #475569;
+
+  --canvas-bg: #0f172a;
+  --table-head: #1e293b;
+
+  --log-bg: #0f172a;
+  --log-text: #a5f3fc;
+  --log-probe: #93c5fd;
+  --log-expire: #fca5a5;
+  --log-reply: #fcd34d;
+  --log-record: #86efac;
+  --log-info: #e2e8f0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  margin: 0;
+  padding: 20px;
+  color: var(--text);
+}
+
+h1 {
+  font-size: 22px;
+  text-align: center;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  padding: 7px 12px;
+  font-size: 13px;
+  border: 1px solid var(--theme-btn-border);
+  border-radius: 999px;
+  background: var(--theme-btn-bg);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.theme-toggle:hover {
+  border-color: var(--btn-bg);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-bg);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+button {
+  padding: 6px 18px;
+  font-size: 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  cursor: pointer;
+}
+
+button:disabled {
+  background: var(--btn-disabled);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: var(--btn-secondary);
+}
+
+#startBtn {
+  min-width: 100px;
+}
+
+#status {
+  text-align: center;
+  font-size: 14px;
+  margin: 10px 0 4px;
+  color: var(--muted);
+}
+
+canvas {
+  display: block;
+  margin: 8px auto;
+  background: var(--canvas-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.legend {
+  max-width: 1000px;
+  margin: 6px auto;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.panels {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+#logPanel {
+  flex: 1 1 380px;
+  background: var(--log-bg);
+  color: var(--log-text);
+  font-family: Consolas, monospace;
+  font-size: 12.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 10px;
+  height: 280px;
+  overflow-y: auto;
+}
+
+#logPanel .evt-probe  { color: var(--log-probe); }
+#logPanel .evt-expire { color: var(--log-expire); }
+#logPanel .evt-reply  { color: var(--log-reply); }
+#logPanel .evt-record { color: var(--log-record); }
+#logPanel .evt-info   { color: var(--log-info); }
+
+#tablePanel {
+  flex: 1 1 420px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: var(--shadow);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  font-family: Consolas, monospace;
+  color: var(--text);
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: center;
+}
+
+th {
+  background: var(--table-head);
+}
+
+@media (max-width: 720px) {
   body {
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-    background: #f4f6f8; margin: 0; padding: 20px; color: #1a202c;
+    padding-top: 58px;
   }
-  h1 { font-size: 22px; text-align: center; }
-  .controls {
-    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
-    justify-content: center; background: #fff; padding: 12px;
-    border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
-  }
-  .controls label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
-  button {
-    padding: 6px 18px; font-size: 14px; border: none; border-radius: 6px;
-    background: #2563eb; color: #fff; cursor: pointer;
-  }
-  button:disabled { background: #94a3b8; cursor: not-allowed; }
-  button.secondary { background: #64748b; }
-  #status { text-align: center; font-size: 14px; margin: 10px 0 4px; color: #334155; }
-  canvas { display: block; margin: 8px auto; background: #0f172a; border-radius: 8px; }
-  .legend { max-width: 1000px; margin: 6px auto; font-size: 12.5px; color: #475569; text-align: center; }
-  .panels { display: flex; gap: 16px; flex-wrap: wrap; max-width: 1000px; margin: 0 auto; }
-  #logPanel {
-    flex: 1 1 380px; background: #0f172a; color: #a5f3fc;
-    font-family: Consolas, monospace; font-size: 12.5px;
-    border-radius: 8px; padding: 10px; height: 280px; overflow-y: auto;
-  }
-  #logPanel .evt-probe  { color: #93c5fd; }
-  #logPanel .evt-expire { color: #fca5a5; }
-  #logPanel .evt-reply  { color: #fcd34d; }
-  #logPanel .evt-record { color: #86efac; }
-  #logPanel .evt-info   { color: #e2e8f0; }
-  #tablePanel { flex: 1 1 420px; background: #fff; border-radius: 8px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: Consolas, monospace; }
-  th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: center; }
-  th { background: #eef2ff; }
+}
 </style>
 </head>
 <body>
+
+<button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="切换深色/浅色主题（T）">🌙 深色</button>
+
 <h1>Traceroute 交互式仿真实验（基于 TTL 与 ICMP 超时报文）</h1>
 
 <div class="controls">
@@ -51,27 +241,42 @@
     <input type="range" id="routerCount" min="2" max="7" value="4">
     <span id="routerCountLabel">4</span>
   </label>
+
   <label>动画速度：
     <input type="range" id="speed" min="0.5" max="4" step="0.5" value="1.5">
     <span id="speedLabel">1.5x</span>
   </label>
-  <button id="startBtn">开始实验</button>
-  <button id="resetBtn" class="secondary">重置</button>
+
+  <button id="startBtn" type="button">开始实验</button>
+  <button id="resetBtn" class="secondary" type="button">重置</button>
 </div>
 
-<div id="status">状态：空闲。点击“开始实验”运行。</div>
+<div id="status" aria-live="polite">状态：空闲。点击“开始实验”或按 Space 开始。</div>
+
 <canvas id="canvas" width="1000" height="220"></canvas>
+
 <div class="legend">
   图例：<span style="color:#60a5fa">●</span> 探测分组（圆内数字为当前 TTL）
   <span style="color:#f59e0b">●</span> ICMP 返回报文
   <span style="color:#f87171">◎</span> 路由器因 TTL=0 丢弃分组
+  <br>
+  快捷键：Space 播放/暂停；S/→ 单步执行；R 重置；T 切换深色/浅色主题
 </div>
 
 <div class="panels">
   <div id="logPanel"></div>
+
   <div id="tablePanel">
     <table id="resultTable">
-      <thead><tr><th>跳数</th><th>设备 (地址)</th><th>RTT 1</th><th>RTT 2</th><th>RTT 3</th></tr></thead>
+      <thead>
+        <tr>
+          <th>跳数</th>
+          <th>设备 (地址)</th>
+          <th>RTT 1</th>
+          <th>RTT 2</th>
+          <th>RTT 3</th>
+        </tr>
+      </thead>
       <tbody></tbody>
     </table>
   </div>
@@ -84,12 +289,16 @@
 /* ---------- DOM 引用 ---------- */
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+
 const routerCountInput = document.getElementById('routerCount');
 const routerCountLabel = document.getElementById('routerCountLabel');
 const speedInput = document.getElementById('speed');
 const speedLabel = document.getElementById('speedLabel');
+
 const startBtn = document.getElementById('startBtn');
 const resetBtn = document.getElementById('resetBtn');
+const themeBtn = document.getElementById('themeToggle');
+
 const statusEl = document.getElementById('status');
 const logPanel = document.getElementById('logPanel');
 const tbody = document.querySelector('#resultTable tbody');
@@ -101,244 +310,703 @@ let cumDelay = [];     // 源到节点 i 的累计时延
 let packets = [];      // 动画中的分组
 let effects = [];      // 丢弃闪烁特效
 let results = [];      // results[hop-1][round] = rtt
+
 let N = 0;             // 总跳数 = 路由器数 + 1
-let round = 0, ttl = 1;
+let round = 0;
+let ttl = 1;
+
 let state = 'idle';    // idle|probing|replying|pause|done
 let pauseLeft = 0;
+
 let running = false;
+let paused = false;
 
 const MARGIN = 70;
 const PX_PER_MS = 0.15; // 1x 速度下每虚拟毫秒移动的像素
 
-function rand(min, max){ return Math.random() * (max - min) + min; }
+/* ---------- 主题 ---------- */
+const THEME_KEY = 'traceroute-theme';
 
-/* ---------- 拓扑构建 ---------- */
-function buildTopology(){
-  const rc = parseInt(routerCountInput.value, 10);
-  N = rc + 1;
-  nodes = []; linkDelays = [];
-  nodes.push({name:'源主机', ip:'192.168.0.10', kind:'src'});
-  for(let i = 1; i <= rc; i++) nodes.push({name:'路由器 '+i, ip:'10.0.'+i+'.1', kind:'router'});
-  nodes.push({name:'目的主机', ip:'203.0.113.5', kind:'dst'});
-  for(let i = 0; i < N; i++) linkDelays.push(Math.round(rand(8, 35)));
-
-  // 屏幕上的链路长度与传播时延成正比，直观体现时延差异
-  const total = linkDelays.reduce((a,b)=>a+b, 0);
-  const usable = canvas.width - MARGIN * 2;
-  let x = MARGIN;
-  nodes[0].x = x;
-  for(let i = 0; i < N; i++){
-    x += usable * linkDelays[i] / total;
-    nodes[i+1].x = x;
+const THEME_CANVAS = {
+  light: {
+    link: '#94a3b8',
+    linkLabel: '#64748b',
+    nodeName: '#111827',
+    nodeIp: '#6b7280',
+    routerFill: '#ffffff',
+    routerStroke: '#2563eb',
+    srcFill: '#dcfce7',
+    srcStroke: '#16a34a',
+    dstFill: '#ffedd5',
+    dstStroke: '#ea580c',
+    probe: '#2563eb',
+    probeText: '#ffffff',
+    reply: '#d97706',
+    effectRGB: '220,38,38'
+  },
+  dark: {
+    link: '#475569',
+    linkLabel: '#94a3b8',
+    nodeName: '#e2e8f0',
+    nodeIp: '#94a3b8',
+    routerFill: '#1e293b',
+    routerStroke: '#60a5fa',
+    srcFill: '#14532d',
+    srcStroke: '#4ade80',
+    dstFill: '#7c2d12',
+    dstStroke: '#fb923c',
+    probe: '#3b82f6',
+    probeText: '#ffffff',
+    reply: '#f59e0b',
+    effectRGB: '248,113,113'
   }
-  cumDelay = [0];
-  for(let i = 0; i < N; i++) cumDelay.push(cumDelay[i] + linkDelays[i]);
-  buildTable();
+};
+
+function getPreferredTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch (e) {
+    // localStorage 不可用时忽略
+  }
+
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
+  }
+  return 'light';
 }
 
-function buildTable(){
-  tbody.innerHTML = '';
-  results = [];
-  for(let h = 1; h <= N; h++){
-    results.push([null, null, null]);
-    const tr = document.createElement('tr');
-    tr.id = 'row-' + h;
-    tr.innerHTML = '<td>'+h+'</td><td>'+nodes[h].name+' ('+nodes[h].ip+')</td><td>-</td><td>-</td><td>-</td>';
-    tbody.appendChild(tr);
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch (e) {
+    // localStorage 不可用时忽略
+  }
+
+  if (themeBtn) {
+    themeBtn.textContent = theme === 'dark' ? '☀️ 浅色' : '🌙 深色';
+    themeBtn.setAttribute('aria-pressed', String(theme === 'dark'));
+    themeBtn.title = '切换深色/浅色主题（T）';
   }
 }
 
-function log(msg, cls){
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+function canvasTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark'
+    ? THEME_CANVAS.dark
+    : THEME_CANVAS.light;
+}
+
+/* ---------- 工具函数 ---------- */
+function rand(min, max) {
+  return Math.random() * (max - min) + min;
+}
+
+function log(msg, cls) {
   const div = document.createElement('div');
-  if(cls) div.className = cls;
+  if (cls) div.className = cls;
   div.textContent = msg;
   logPanel.appendChild(div);
   logPanel.scrollTop = logPanel.scrollHeight;
 }
 
-/* ---------- 实验流程控制 ---------- */
-function resetAll(){
-  running = false; state = 'idle';
-  packets = []; effects = [];
-  round = 0; ttl = 1;
-  buildTopology();
-  logPanel.innerHTML = '';
-  log('拓扑重建：' + (N-1) + ' 台路由器，各链路传播时延(ms)：' + linkDelays.join(', '), 'evt-info');
-  statusEl.textContent = '状态：空闲。点击“开始实验”运行。';
-  startBtn.disabled = false;
+/* ---------- 状态栏与按钮 ---------- */
+function refreshStatus() {
+  if (!running || state === 'done') {
+    if (state === 'done') {
+      statusEl.textContent =
+        '状态：实验完成。共发送 3N = ' + (3 * N) + ' 个分组。按 Space 或点击“开始实验”重新运行。';
+    } else {
+      statusEl.textContent = '状态：空闲。点击“开始实验”或按 Space 开始。';
+    }
+    return;
+  }
+
+  const mode = paused ? '已暂停' : '运行中';
+  const phase = state === 'pause' ? '，等待发送下一个探测分组' : '';
+
+  statusEl.textContent =
+    '状态：' + mode +
+    '：第 ' + Math.min(round + 1, 3) + '/3 轮，探测 TTL=' + ttl + '/' + N + phase +
+    '。快捷键：Space 播放/暂停，S/→ 单步，R 重置，T 主题。';
 }
 
-function start(){
-  if(running) return;
-  running = true;
-  startBtn.disabled = true;
-  round = 0; ttl = 1;
-  packets = []; effects = [];
+function setRunningUI() {
+  if (!running || state === 'done') {
+    startBtn.disabled = false;
+    startBtn.textContent = '开始实验';
+    return;
+  }
+
+  if (paused) {
+    startBtn.disabled = false;
+    startBtn.textContent = '继续实验';
+  } else {
+    startBtn.disabled = true;
+    startBtn.textContent = '实验运行中';
+  }
+}
+
+/* ---------- 拓扑构建 ---------- */
+function buildTopology() {
+  const rc = parseInt(routerCountInput.value, 10);
+  N = rc + 1;
+
+  nodes = [];
+  linkDelays = [];
+
+  nodes.push({ name: '源主机', ip: '192.168.0.10', kind: 'src' });
+
+  for (let i = 1; i <= rc; i++) {
+    nodes.push({ name: '路由器 ' + i, ip: '10.0.' + i + '.1', kind: 'router' });
+  }
+
+  nodes.push({ name: '目的主机', ip: '203.0.113.5', kind: 'dst' });
+
+  for (let i = 0; i < N; i++) {
+    linkDelays.push(Math.round(rand(8, 35)));
+  }
+
+  // 屏幕上的链路长度与传播时延成正比，直观体现时延差异
+  const total = linkDelays.reduce((a, b) => a + b, 0);
+  const usable = canvas.width - MARGIN * 2;
+
+  let x = MARGIN;
+  nodes[0].x = x;
+
+  for (let i = 0; i < N; i++) {
+    x += usable * linkDelays[i] / total;
+    nodes[i + 1].x = x;
+  }
+
+  cumDelay = [0];
+  for (let i = 0; i < N; i++) {
+    cumDelay.push(cumDelay[i] + linkDelays[i]);
+  }
+
   buildTable();
-  log('=== 实验开始：共 3 轮，每轮发送 N=' + N + ' 个探测分组（3N=' + (3*N) + '） ===', 'evt-info');
+}
+
+function buildTable() {
+  tbody.innerHTML = '';
+  results = [];
+
+  for (let h = 1; h <= N; h++) {
+    results.push([null, null, null]);
+
+    const tr = document.createElement('tr');
+    tr.id = 'row-' + h;
+    tr.innerHTML =
+      '<td>' + h + '</td>' +
+      '<td>' + nodes[h].name + ' (' + nodes[h].ip + ')</td>' +
+      '<td>-</td><td>-</td><td>-</td>';
+
+    tbody.appendChild(tr);
+  }
+}
+
+function updateTableRow(hop) {
+  const cells = document.getElementById('row-' + hop).children;
+
+  for (let r = 0; r < 3; r++) {
+    cells[2 + r].textContent =
+      (results[hop - 1][r] == null) ? '-' : results[hop - 1][r] + ' ms';
+  }
+}
+
+/* ---------- 实验流程控制 ---------- */
+function resetAll() {
+  running = false;
+  paused = false;
+  state = 'idle';
+
+  packets = [];
+  effects = [];
+
+  round = 0;
+  ttl = 1;
+
+  buildTopology();
+
+  logPanel.innerHTML = '';
+  log('拓扑重建：' + (N - 1) + ' 台路由器，各链路传播时延(ms)：' + linkDelays.join(', '), 'evt-info');
+
+  refreshStatus();
+  setRunningUI();
+}
+
+function start(opts = {}) {
+  const startPaused = !!opts.paused;
+
+  // 如果实验正在运行：暂停时点击“继续实验”可恢复；运行中则忽略
+  if (running && state !== 'done') {
+    if (paused && !startPaused) {
+      paused = false;
+      refreshStatus();
+      setRunningUI();
+    }
+    return;
+  }
+
+  running = true;
+  paused = startPaused;
+
+  round = 0;
+  ttl = 1;
+  packets = [];
+  effects = [];
+
+  buildTable();
+
+  logPanel.innerHTML = '';
+  log('拓扑：' + (N - 1) + ' 台路由器，各链路传播时延(ms)：' + linkDelays.join(', '), 'evt-info');
+  log('=== 实验开始：共 3 轮，每轮发送 N=' + N + ' 个探测分组（3N=' + (3 * N) + '） ===', 'evt-info');
+
   launchProbe();
+
+  if (startPaused) {
+    log('单步模式：当前处于暂停状态。按 S/→ 推进到下一步。', 'evt-info');
+  }
+
+  refreshStatus();
+  setRunningUI();
 }
 
-function launchProbe(){
+function launchProbe() {
   state = 'probing';
-  packets.push({kind:'probe', ttl:ttl, target:ttl, x:nodes[0].x, dir:+1, hopsPassed:0, arrived:false});
-  log('[第 ' + (round+1) + '/3 轮] 发送探测分组 #' + ttl + '，TTL=' + ttl, 'evt-probe');
-  statusEl.textContent = '运行中：第 ' + (round+1) + '/3 轮，探测 TTL=' + ttl + '/' + N;
+
+  packets.push({
+    kind: 'probe',
+    ttl: ttl,
+    target: ttl,
+    x: nodes[0].x,
+    dir: +1,
+    hopsPassed: 0,
+    arrived: false
+  });
+
+  log('[第 ' + (round + 1) + '/3 轮] 发送探测分组 #' + ttl + '，TTL=' + ttl, 'evt-probe');
+  refreshStatus();
 }
 
-function advance(){
+function advance() {
   ttl++;
-  if(ttl > N){
-    ttl = 1; round++;
-    if(round >= 3){
-      state = 'done'; running = false;
-      startBtn.disabled = false;
-      statusEl.textContent = '状态：实验完成。共发送 3N = ' + (3*N) + ' 个分组。';
-      log('=== 实验完成：共发送 3N = ' + (3*N) + ' 个分组 ===', 'evt-info');
+
+  if (ttl > N) {
+    ttl = 1;
+    round++;
+
+    if (round >= 3) {
+      state = 'done';
+      running = false;
+      paused = false;
+
+      log('=== 实验完成：共发送 3N = ' + (3 * N) + ' 个分组 ===', 'evt-info');
+
+      refreshStatus();
+      setRunningUI();
       return;
     }
-    log('--- 第 ' + round + ' 轮完成，开始第 ' + (round+1) + ' 轮 ---', 'evt-info');
+
+    log('--- 第 ' + round + ' 轮完成，开始第 ' + (round + 1) + ' 轮 ---', 'evt-info');
   }
+
   state = 'pause';
   pauseLeft = 250;
+
+  refreshStatus();
 }
 
-function updateTableRow(hop){
-  const cells = document.getElementById('row-' + hop).children;
-  for(let r = 0; r < 3; r++){
-    cells[2+r].textContent = (results[hop-1][r] == null) ? '-' : results[hop-1][r] + ' ms';
+function togglePlayPause() {
+  if (!running || state === 'done') {
+    start({ paused: false });
+    return;
   }
+
+  paused = !paused;
+
+  refreshStatus();
+  setRunningUI();
+}
+
+/* ---------- 单步执行 ---------- */
+function stepOnce() {
+  // 空闲或已完成时，先以暂停模式启动实验
+  if (!running || state === 'done') {
+    start({ paused: true });
+    return;
+  }
+
+  paused = true;
+
+  // 若当前处于两轮之间的等待状态，则单步执行“发出下一个探测分组”
+  if (state === 'pause') {
+    launchProbe();
+    refreshStatus();
+    setRunningUI();
+    return;
+  }
+
+  if (!packets.length) {
+    refreshStatus();
+    setRunningUI();
+    return;
+  }
+
+  const speed = parseFloat(speedInput.value) || 1;
+  let minDist = Infinity;
+
+  // 计算距离下一个关键位置最近的分组
+  for (const p of packets) {
+    if (p.kind === 'probe') {
+      let nextIndex;
+
+      // 探测分组先经过中间节点，最后到达 target 节点
+      if (p.hopsPassed < p.target - 1) {
+        nextIndex = p.hopsPassed + 1;
+      } else {
+        nextIndex = p.target;
+      }
+
+      if (nextIndex >= nodes.length) continue;
+
+      const dist = nodes[nextIndex].x - p.x;
+      if (dist > 0.0001) {
+        minDist = Math.min(minDist, dist);
+      } else {
+        minDist = Math.min(minDist, 0.02);
+      }
+    } else {
+      // ICMP 返回报文的下一个关键位置是源主机
+      const dist = p.x - nodes[0].x;
+      if (dist > 0.0001) {
+        minDist = Math.min(minDist, dist);
+      } else {
+        minDist = Math.min(minDist, 0.02);
+      }
+    }
+  }
+
+  if (!isFinite(minDist)) {
+    update(16);
+    refreshStatus();
+    setRunningUI();
+    return;
+  }
+
+  const pxPerMs = speed * PX_PER_MS;
+  const dt = Math.max(0.001, (minDist + 0.02) / pxPerMs);
+
+  update(dt);
+
+  refreshStatus();
+  setRunningUI();
 }
 
 /* ---------- 仿真推进 ---------- */
-function update(dt){
+function update(dt) {
   const speed = parseFloat(speedInput.value);
-  if(state === 'pause'){
+
+  if (state === 'pause') {
     pauseLeft -= dt * speed;
-    if(pauseLeft <= 0) launchProbe();
+    if (pauseLeft <= 0) {
+      launchProbe();
+    }
   }
+
   const step = dt * speed * PX_PER_MS;
 
-  for(const p of packets){
+  for (const p of packets) {
     const oldX = p.x;
     p.x += p.dir * step;
-    if(p.kind === 'probe'){
-      for(let i = 1; i < p.target; i++){
-        if(oldX < nodes[i].x && p.x >= nodes[i].x){
+
+    if (p.kind === 'probe') {
+      for (let i = 1; i < p.target; i++) {
+        if (oldX < nodes[i].x && p.x >= nodes[i].x) {
           p.hopsPassed++;
           log('  探测分组经过 ' + nodes[i].name + '，TTL 减为 ' + (p.ttl - p.hopsPassed), 'evt-probe');
         }
       }
-      if(p.x >= nodes[p.target].x){ p.x = nodes[p.target].x; p.arrived = true; }
-    }else{
-      if(p.x <= nodes[0].x){ p.x = nodes[0].x; p.arrived = true; }
+
+      if (p.x >= nodes[p.target].x) {
+        p.x = nodes[p.target].x;
+        p.arrived = true;
+      }
+    } else {
+      if (p.x <= nodes[0].x) {
+        p.x = nodes[0].x;
+        p.arrived = true;
+      }
     }
   }
 
-  for(let i = packets.length - 1; i >= 0; i--){
+  for (let i = packets.length - 1; i >= 0; i--) {
     const p = packets[i];
-    if(!p.arrived) continue;
+    if (!p.arrived) continue;
+
     packets.splice(i, 1);
-    if(p.kind === 'probe'){
+
+    if (p.kind === 'probe') {
       const hop = p.target;
-      if(hop < N){
-        effects.push({x:nodes[hop].x, t:0});
+
+      if (hop < N) {
+        effects.push({ x: nodes[hop].x, t: 0 });
         log(nodes[hop].name + '：TTL 减至 0 → 丢弃分组，向源返回 ICMP 超时报文', 'evt-expire');
-        packets.push({kind:'reply', x:nodes[hop].x, dir:-1, fromHop:hop, arrived:false});
-      }else{
+
+        packets.push({
+          kind: 'reply',
+          x: nodes[hop].x,
+          dir: -1,
+          fromHop: hop,
+          arrived: false
+        });
+      } else {
         log('目的主机：收到探测分组 #' + N + '，返回响应报文', 'evt-reply');
-        packets.push({kind:'reply', x:nodes[N].x, dir:-1, fromHop:N, arrived:false});
+
+        packets.push({
+          kind: 'reply',
+          x: nodes[N].x,
+          dir: -1,
+          fromHop: N,
+          arrived: false
+        });
       }
+
       state = 'replying';
-    }else{
+    } else {
       const hop = p.fromHop;
       const jitter = 1 + rand(-0.06, 0.18); // 模拟真实网络的随机时延抖动
       const rtt = Math.max(1, Math.round(2 * cumDelay[hop] * jitter));
-      results[hop-1][round] = rtt;
+
+      results[hop - 1][round] = rtt;
       updateTableRow(hop);
+
       log('源收到跳 ' + hop + ' 的响应，记录 RTT = ' + rtt + ' ms', 'evt-record');
+
       advance();
     }
   }
 
-  for(let i = effects.length - 1; i >= 0; i--){
+  for (let i = effects.length - 1; i >= 0; i--) {
     effects[i].t += dt;
-    if(effects[i].t > 600) effects.splice(i, 1);
+    if (effects[i].t > 600) {
+      effects.splice(i, 1);
+    }
   }
 }
 
 /* ---------- 绘制 ---------- */
-function draw(){
+function draw() {
+  const theme = canvasTheme();
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   const y = 100;
 
-  ctx.strokeStyle = '#475569'; ctx.lineWidth = 2;
-  for(let i = 0; i < N; i++){
-    ctx.beginPath(); ctx.moveTo(nodes[i].x, y); ctx.lineTo(nodes[i+1].x, y); ctx.stroke();
-    ctx.fillStyle = '#94a3b8'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
-    ctx.fillText(linkDelays[i] + ' ms', (nodes[i].x + nodes[i+1].x) / 2, y - 12);
+  // 链路
+  ctx.strokeStyle = theme.link;
+  ctx.lineWidth = 2;
+
+  for (let i = 0; i < N; i++) {
+    ctx.beginPath();
+    ctx.moveTo(nodes[i].x, y);
+    ctx.lineTo(nodes[i + 1].x, y);
+    ctx.stroke();
+
+    ctx.fillStyle = theme.linkLabel;
+    ctx.font = '11px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(linkDelays[i] + ' ms', (nodes[i].x + nodes[i + 1].x) / 2, y - 12);
   }
 
-  for(const e of effects){
-    ctx.strokeStyle = 'rgba(248,113,113,' + (1 - e.t/600) + ')';
+  // 丢弃特效
+  for (const e of effects) {
+    const alpha = Math.max(0, 1 - e.t / 600);
+    ctx.strokeStyle = 'rgba(' + theme.effectRGB + ',' + alpha + ')';
     ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(e.x, y, 8 + e.t/600*22, 0, Math.PI*2); ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(e.x, y, 8 + e.t / 600 * 22, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
-  for(const n of nodes){
-    if(n.kind === 'router'){
-      ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(n.x, y, 10, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    }else{
-      ctx.fillStyle = (n.kind === 'src') ? '#14532d' : '#7c2d12';
-      ctx.strokeStyle = (n.kind === 'src') ? '#4ade80' : '#fb923c';
+  // 节点
+  for (const n of nodes) {
+    if (n.kind === 'router') {
+      ctx.fillStyle = theme.routerFill;
+      ctx.strokeStyle = theme.routerStroke;
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.rect(n.x-11, y-11, 22, 22); ctx.fill(); ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(n.x, y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      if (n.kind === 'src') {
+        ctx.fillStyle = theme.srcFill;
+        ctx.strokeStyle = theme.srcStroke;
+      } else {
+        ctx.fillStyle = theme.dstFill;
+        ctx.strokeStyle = theme.dstStroke;
+      }
+
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      ctx.rect(n.x - 11, y - 11, 22, 22);
+      ctx.fill();
+      ctx.stroke();
     }
-    ctx.fillStyle = '#e2e8f0'; ctx.font = '12px "Microsoft YaHei", sans-serif'; ctx.textAlign = 'center';
+
+    ctx.fillStyle = theme.nodeName;
+    ctx.font = '12px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
     ctx.fillText(n.name, n.x, y + 32);
-    ctx.fillStyle = '#94a3b8'; ctx.font = '10.5px Consolas, monospace';
+
+    ctx.fillStyle = theme.nodeIp;
+    ctx.font = '10.5px Consolas, monospace';
     ctx.fillText(n.ip, n.x, y + 46);
   }
 
-  for(const p of packets){
-    if(p.kind === 'probe'){
-      ctx.fillStyle = '#3b82f6';
-      ctx.beginPath(); ctx.arc(p.x, y, 8, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Consolas, monospace'; ctx.textAlign = 'center';
+  // 分组
+  for (const p of packets) {
+    if (p.kind === 'probe') {
+      ctx.fillStyle = theme.probe;
+
+      ctx.beginPath();
+      ctx.arc(p.x, y, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = theme.probeText;
+      ctx.font = 'bold 10px Consolas, monospace';
+      ctx.textAlign = 'center';
       ctx.fillText(String(p.ttl - p.hopsPassed), p.x, y + 3.5);
-    }else{
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath(); ctx.arc(p.x, y, 7, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.fillStyle = theme.reply;
+
+      ctx.beginPath();
+      ctx.arc(p.x, y, 7, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 }
 
 /* ---------- 主循环 ---------- */
 let lastTs = null;
-function loop(ts){
-  if(lastTs == null) lastTs = ts;
+
+function loop(ts) {
+  if (lastTs == null) lastTs = ts;
+
   let dt = ts - lastTs;
   lastTs = ts;
-  if(dt > 100) dt = 100; // 防止切换标签页后时间跳变
-  update(dt);
+
+  if (dt > 100) dt = 100; // 防止切换标签页后时间跳变
+
+  if (!paused) {
+    update(dt);
+  }
+
   draw();
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
 
 /* ---------- 事件绑定 ---------- */
 routerCountInput.addEventListener('input', () => {
   routerCountLabel.textContent = routerCountInput.value;
   resetAll();
 });
+
 speedInput.addEventListener('input', () => {
   speedLabel.textContent = parseFloat(speedInput.value).toFixed(1) + 'x';
 });
-startBtn.addEventListener('click', start);
-resetBtn.addEventListener('click', resetAll);
 
+startBtn.addEventListener('click', () => {
+  start();
+});
+
+resetBtn.addEventListener('click', () => {
+  resetAll();
+});
+
+themeBtn.addEventListener('click', () => {
+  toggleTheme();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const target = e.target;
+
+  // 避免影响可编辑输入区域
+  if (target && target.isContentEditable) return;
+
+  if (target && target.tagName) {
+    const tag = target.tagName.toUpperCase();
+
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    if (tag === 'INPUT') {
+      const type = (target.type || 'text').toLowerCase();
+      if (
+        type === 'text' ||
+        type === 'number' ||
+        type === 'email' ||
+        type === 'password' ||
+        type === 'search' ||
+        type === 'url' ||
+        type === 'tel'
+      ) {
+        return;
+      }
+    }
+  }
+
+  // 防止 Space、R、T 长按重复触发
+  if (e.code === 'Space' || e.code === 'KeyR' || e.code === 'KeyT') {
+    if (e.repeat) return;
+  }
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+
+      // 避免焦点按钮被 Space 默认激活
+      if (target && typeof target.blur === 'function') {
+        target.blur();
+      }
+
+      togglePlayPause();
+      break;
+
+    case 'KeyS':
+    case 'ArrowRight':
+      e.preventDefault();
+      stepOnce();
+      break;
+
+    case 'KeyR':
+      e.preventDefault();
+      resetAll();
+      break;
+
+    case 'KeyT':
+      e.preventDefault();
+      toggleTheme();
+      break;
+  }
+});
+
+/* ---------- 初始化 ---------- */
+applyTheme(getPreferredTheme());
+requestAnimationFrame(loop);
 resetAll();
+
 })();
 </script>
 </body>
