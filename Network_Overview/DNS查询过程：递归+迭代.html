@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNS 解析过程交互演示 — cse.nyu.edu → gaia.cs.umass.edu</title>
+    <style>
+        /* ==================== CSS Variables (Theme Colors) ==================== */
+        :root {
+            /* Light Theme (default) */
+            --bg-primary: #f5f7fa;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e9ecef;
+            --text-primary: #1a1d23;
+            --text-secondary: #495057;
+            --text-muted: #6c757d;
+            --border-color: #dee2e6;
+            --shadow: 0 2px 8px rgba(0,0,0,0.08);
+            --node-bg: #ffffff;
+            --node-border: #adb5bd;
+            --node-text: #1a1d23;
+            --color-active: #2e7d32;
+            --color-sending: #2e7d32;
+            --color-receiving: #1565c0;
+            --color-waiting: #f57f17;
+            --color-error: #c62828;
+            --color-idle: #78909c;
+            --color-complete: #2e7d32;
+            --packet-fill: #e3f2fd;
+            --packet-border: #1565c0;
+            --packet-text: #0d47a1;
+            --link-color: #90a4ae;
+            --link-active: #42a5f5;
+            --btn-primary: #1565c0;
+            --btn-primary-hover: #0d47a1;
+            --btn-secondary: #546e7a;
+            --btn-secondary-hover: #37474f;
+            --btn-text: #ffffff;
+            --radius: 6px;
+            --transition-speed: 0.3s;
+        }
+        [data-theme="dark"] {
+            --bg-primary: #1a1d23;
+            --bg-secondary: #2d3139;
+            --bg-tertiary: #3a3f47;
+            --text-primary: #e8eaed;
+            --text-secondary: #bdc1c6;
+            --text-muted: #9aa0a6;
+            --border-color: #4a4f57;
+            --shadow: 0 2px 8px rgba(0,0,0,0.3);
+            --node-bg: #2d3139;
+            --node-border: #5f6368;
+            --node-text: #e8eaed;
+            --color-active: #66bb6a;
+            --color-sending: #66bb6a;
+            --color-receiving: #42a5f5;
+            --color-waiting: #fdd835;
+            --color-error: #ef5350;
+            --color-idle: #78909c;
+            --color-complete: #66bb6a;
+            --packet-fill: #1a3a5c;
+            --packet-border: #42a5f5;
+            --packet-text: #90caf9;
+            --link-color: #546e7a;
+            --link-active: #42a5f5;
+            --btn-primary: #42a5f5;
+            --btn-primary-hover: #1e88e5;
+            --btn-secondary: #78909c;
+            --btn-secondary-hover: #90a4ae;
+            --btn-text: #ffffff;
+        }
+
+        /* ==================== Base & Layout ==================== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            transition: background var(--transition-speed), color var(--transition-speed);
+            min-height: 100vh;
+        }
+        .app-container { max-width: 1440px; margin: 0 auto; padding: 16px; }
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 20px; background: var(--bg-secondary);
+            border: 1px solid var(--border-color); border-radius: var(--radius);
+            margin-bottom: 16px; box-shadow: var(--shadow);
+        }
+        .header h1 { font-size: 1.3rem; font-weight: 600; }
+        .header .subtitle { font-size: 0.85rem; color: var(--text-muted); margin-top: 2px; }
+        .main-content { display: grid; grid-template-columns: 1fr 380px; gap: 16px; }
+
+        /* ==================== Topology ==================== */
+        .topology-panel {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+        }
+        .topology-panel h2 { font-size: 1rem; margin-bottom: 12px; color: var(--text-secondary); }
+        .svg-container { width: 100%; position: relative; }
+        .svg-container svg { width: 100%; height: auto; display: block; }
+
+        /* SVG Elements */
+        .node-group { cursor: pointer; }
+        .node-group:hover .node-box { filter: brightness(0.95); }
+        .node-box {
+            fill: var(--node-bg); stroke: var(--node-border); stroke-width: 2;
+            rx: 8; ry: 8; transition: fill var(--transition-speed), stroke var(--transition-speed), stroke-width 0.2s;
+        }
+        .node-label {
+            fill: var(--node-text); font-size: 13px; font-weight: 600;
+            text-anchor: middle; dominant-baseline: middle; pointer-events: none;
+        }
+        .node-sublabel {
+            fill: var(--text-muted); font-size: 10px; text-anchor: middle;
+            dominant-baseline: middle; pointer-events: none;
+        }
+        .node-state-sending .node-box { stroke: var(--color-sending); stroke-width: 3; }
+        .node-state-receiving .node-box { stroke: var(--color-receiving); stroke-width: 3; }
+        .node-state-waiting .node-box { stroke: var(--color-waiting); stroke-width: 3; }
+        .node-state-error .node-box { stroke: var(--color-error); stroke-width: 3; }
+        .node-state-complete .node-box { stroke: var(--color-complete); stroke-width: 3; }
+        .link-line {
+            stroke: var(--link-color); stroke-width: 1.5; stroke-dasharray: 6 4;
+            transition: stroke var(--transition-speed);
+        }
+        .link-line-active { stroke: var(--link-active); stroke-width: 2.5; stroke-dasharray: none; }
+        .packet-group { cursor: pointer; pointer-events: all; }
+        .packet-box { fill: var(--packet-fill); stroke: var(--packet-border); stroke-width: 1.5; rx: 4; ry: 4; }
+        .packet-label {
+            fill: var(--packet-text); font-size: 10px; font-weight: 600;
+            text-anchor: middle; dominant-baseline: middle; pointer-events: none;
+        }
+
+        /* ==================== Side Panel ==================== */
+        .side-panel { display: flex; flex-direction: column; gap: 12px; }
+        .panel-section {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow);
+        }
+        .panel-section h3 {
+            font-size: 0.9rem; margin-bottom: 10px; color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color); padding-bottom: 6px;
+        }
+        .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .btn {
+            padding: 8px 14px; border: none; border-radius: var(--radius);
+            cursor: pointer; font-size: 0.85rem; font-weight: 500;
+            transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px;
+        }
+        .btn-primary { background: var(--btn-primary); color: var(--btn-text); }
+        .btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { background: var(--btn-secondary); color: var(--btn-text); }
+        .btn-secondary:hover:not(:disabled) { background: var(--btn-secondary-hover); }
+        .btn-flash { animation: btnFlash 0.35s ease; }
+        @keyframes btnFlash {
+            0% { box-shadow: 0 0 0 0 var(--btn-primary); }
+            50% { box-shadow: 0 0 0 6px rgba(21, 101, 192, 0.35); }
+            100% { box-shadow: 0 0 0 0 var(--btn-primary); }
+        }
+        .speed-control { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+        .speed-control label { font-size: 0.8rem; color: var(--text-muted); }
+        .speed-control select {
+            padding: 4px 8px; border: 1px solid var(--border-color);
+            border-radius: var(--radius); background: var(--bg-tertiary);
+            color: var(--text-primary); font-size: 0.8rem;
+        }
+        .step-info { min-height: 80px; }
+        .step-counter { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; }
+        .step-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
+        .step-description { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5; }
+        .info-panel { min-height: 100px; max-height: 320px; overflow-y: auto; }
+        .info-panel .field-group { margin-bottom: 10px; }
+        .info-panel .field-group-title {
+            font-size: 0.82rem; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;
+        }
+        .info-panel .field-desc { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px; }
+        .info-panel .field {
+            display: flex; font-size: 0.78rem; padding: 2px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .info-panel .field-key { color: var(--text-muted); min-width: 110px; flex-shrink: 0; }
+        .info-panel .field-value {
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Consolas', monospace;
+            word-break: break-all;
+        }
+        .legend-items { display: flex; flex-wrap: wrap; gap: 10px; }
+        .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.78rem; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; opacity: 0.7; }
+        .legend-dot-sending { border-color: var(--color-sending); background: var(--color-sending); }
+        .legend-dot-receiving { border-color: var(--color-receiving); background: var(--color-receiving); }
+        .legend-dot-waiting { border-color: var(--color-waiting); background: var(--color-waiting); }
+        .legend-dot-idle { border-color: var(--color-idle); background: var(--color-idle); }
+        .legend-dot-complete { border-color: var(--color-complete); background: var(--color-complete); }
+        .legend-packet {
+            width: 20px; height: 12px; border-radius: 3px;
+            background: var(--packet-fill); border: 1.5px solid var(--packet-border);
+        }
+        .shortcuts-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 0.78rem; }
+        .shortcut-key {
+            background: var(--bg-tertiary); border: 1px solid var(--border-color);
+            border-radius: 3px; padding: 2px 8px; font-family: monospace;
+            font-size: 0.75rem; text-align: center; min-width: 60px; display: inline-block;
+        }
+        .shortcut-desc { color: var(--text-secondary); }
+        .theme-toggle {
+            padding: 8px 14px; border: 1px solid var(--border-color);
+            border-radius: var(--radius); background: var(--bg-tertiary);
+            color: var(--text-primary); cursor: pointer; font-size: 0.85rem;
+            display: flex; align-items: center; gap: 6px; transition: all var(--transition-speed);
+            white-space: nowrap;
+        }
+        .theme-toggle:hover { background: var(--border-color); }
+        .footer-note {
+            margin-top: 14px; padding: 10px 16px; background: var(--bg-secondary);
+            border: 1px solid var(--border-color); border-radius: var(--radius);
+            font-size: 0.78rem; color: var(--text-muted); line-height: 1.5;
+        }
+
+        /* ==================== Responsive ==================== */
+        @media (max-width: 1024px) {
+            .main-content { grid-template-columns: 1fr; }
+            .side-panel { flex-direction: row; flex-wrap: wrap; }
+            .panel-section { flex: 1; min-width: 280px; }
+        }
+        @media (max-width: 600px) {
+            .header h1 { font-size: 1.1rem; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .speed-control { margin-left: 0; }
+            .side-panel { flex-direction: column; }
+            .panel-section { min-width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div>
+                <h1>DNS 解析过程交互演示</h1>
+                <div class="subtitle">《计算机网络：自顶向下方法》Figure 2.17 — cse.nyu.edu 解析 gaia.cs.umass.edu</div>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="切换主题">
+                <span id="themeIcon">🌙</span>
+                <span id="themeLabel">深色模式</span>
+            </button>
+        </header>
+
+        <div class="main-content">
+            <!-- Topology Panel -->
+            <div class="topology-panel">
+                <h2>🌐 网络拓扑与动画演示区</h2>
+                <div class="svg-container">
+                    <svg id="topologySvg" viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg">
+                        <g id="linksGroup">
+                            <line class="link-line" id="link-cse-dns" x1="225" y1="420" x2="225" y2="270"/>
+                            <line class="link-line" id="link-dns-root" x1="225" y1="210" x2="225" y2="110"/>
+                            <line class="link-line" id="link-dns-tld" x1="310" y1="230" x2="590" y2="90"/>
+                            <line class="link-line" id="link-dns-auth" x1="310" y1="245" x2="590" y2="245"/>
+                            <line class="link-line" id="link-auth-gaia" x1="675" y1="270" x2="675" y2="420" stroke-dasharray="4 4" opacity="0.4"/>
+                        </g>
+                        <g id="nodesGroup">
+                            <g class="node-group" data-node="cse" id="node-cse">
+                                <rect class="node-box" x="140" y="420" width="170" height="60"/>
+                                <text class="node-label" x="225" y="448">cse.nyu.edu</text>
+                                <text class="node-sublabel" x="225" y="466">请求主机 (客户端)</text>
+                            </g>
+                            <g class="node-group" data-node="dns-nyu" id="node-dns-nyu">
+                                <rect class="node-box" x="140" y="210" width="170" height="60"/>
+                                <text class="node-label" x="225" y="238">dns.nyu.edu</text>
+                                <text class="node-sublabel" x="225" y="256">本地 DNS 服务器</text>
+                            </g>
+                            <g class="node-group" data-node="root" id="node-root">
+                                <rect class="node-box" x="140" y="50" width="170" height="60"/>
+                                <text class="node-label" x="225" y="78">Root DNS Server</text>
+                                <text class="node-sublabel" x="225" y="96">根 DNS 服务器</text>
+                            </g>
+                            <g class="node-group" data-node="edu-tld" id="node-edu-tld">
+                                <rect class="node-box" x="590" y="50" width="170" height="60"/>
+                                <text class="node-label" x="675" y="78">.edu TLD Server</text>
+                                <text class="node-sublabel" x="675" y="96">.edu 顶级域服务器</text>
+                            </g>
+                            <g class="node-group" data-node="auth" id="node-auth">
+                                <rect class="node-box" x="590" y="210" width="170" height="60"/>
+                                <text class="node-label" x="675" y="238">dns.umass.edu</text>
+                                <text class="node-sublabel" x="675" y="256">权威 DNS 服务器</text>
+                            </g>
+                            <g class="node-group" data-node="gaia" id="node-gaia">
+                                <rect class="node-box" x="590" y="420" width="170" height="60"/>
+                                <text class="node-label" x="675" y="448">gaia.cs.umass.edu</text>
+                                <text class="node-sublabel" x="675" y="466">目标主机 (被查询)</text>
+                            </g>
+                        </g>
+                        <g id="packetsGroup"></g>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Side Panel -->
+            <div class="side-panel">
+                <div class="panel-section">
+                    <h3>🎮 控制面板</h3>
+                    <div class="controls">
+                        <button class="btn btn-primary" id="btnPlay" title="播放 (空格键)">▶ 播放</button>
+                        <button class="btn btn-primary" id="btnPause" title="暂停 (空格键)" disabled>⏸ 暂停</button>
+                        <button class="btn btn-secondary" id="btnStep" title="单步 (S 或 →)">⏭ 单步</button>
+                        <button class="btn btn-secondary" id="btnReset" title="重置 (R)">⟳ 重置</button>
+                        <div class="speed-control">
+                            <label for="speedSelect">速度：</label>
+                            <select id="speedSelect">
+                                <option value="0.5">0.5x</option>
+                                <option value="1" selected>1x</option>
+                                <option value="2">2x</option>
+                                <option value="4">4x</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section step-info">
+                    <h3>📝 当前步骤说明</h3>
+                    <div class="step-counter" id="stepCounter">步骤 0 / 9</div>
+                    <div class="step-title" id="stepTitle">初始状态</div>
+                    <div class="step-description" id="stepDescription">
+                        主机 cse.nyu.edu 需要解析 gaia.cs.umass.edu 的 IP 地址。点击"播放"自动执行所有步骤，或点击"单步"逐步观察。
+                    </div>
+                </div>
+
+                <div class="panel-section info-panel">
+                    <h3>📋 详细信息</h3>
+                    <div id="infoPanelContent">
+                        <p style="color: var(--text-muted); font-size: 0.85rem;">点击拓扑图中的节点或移动中的数据包查看详细信息。</p>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>🏷️ 图例</h3>
+                    <div class="legend-items">
+                        <div class="legend-item"><div class="legend-dot legend-dot-sending"></div>发送中</div>
+                        <div class="legend-item"><div class="legend-dot legend-dot-receiving"></div>接收中</div>
+                        <div class="legend-item"><div class="legend-dot legend-dot-waiting"></div>等待/处理中</div>
+                        <div class="legend-item"><div class="legend-dot legend-dot-complete"></div>完成</div>
+                        <div class="legend-item"><div class="legend-dot legend-dot-idle"></div>空闲</div>
+                        <div class="legend-item"><div class="legend-packet"></div>DNS 报文</div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>⌨️ 快捷键</h3>
+                    <div class="shortcuts-list">
+                        <span class="shortcut-key">Space</span><span class="shortcut-desc">播放 / 暂停</span>
+                        <span class="shortcut-key">S / →</span><span class="shortcut-desc">单步执行</span>
+                        <span class="shortcut-key">R</span><span class="shortcut-desc">重置</span>
+                        <span class="shortcut-key">T</span><span class="shortcut-desc">切换主题</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer-note">
+            ⚠️ <strong>此处为简化演示</strong>：数据包内的 Transaction ID（0x1234、0x5678 等）和 TTL 值为示例，实际值因查询而异。
+            gaia.cs.umass.edu 的 IP 使用 128.119.245.12（教科书实验常用地址），真实环境中可能变化。
+            本演示遵循《计算机网络：自顶向下方法》第 7-9 版 Figure 2.17 的迭代查询流程，共 8 条 DNS 报文（4 查询 + 4 响应）。
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+
+    /* ==================== Constants ==================== */
+    const SHORTCUTS = {
+        'Space':      { action: 'togglePlayPause', label: '播放/暂停' },
+        'KeyS':       { action: 'step',            label: '单步执行' },
+        'ArrowRight': { action: 'step',            label: '单步执行' },
+        'KeyR':       { action: 'reset',           label: '重置' },
+        'KeyT':       { action: 'toggleTheme',     label: '切换主题' }
+    };
+
+    const NODE_INFO = {
+        'cse': {
+            title: 'cse.nyu.edu', type: '请求主机',
+            description: 'NYU 计算机工程系的一台主机，正在请求解析 gaia.cs.umass.edu 的 IP 地址。',
+            fields: [
+                ['主机名', 'cse.nyu.edu'],
+                ['角色', 'DNS 客户端（发起递归查询）'],
+                ['协议', 'DNS over UDP (端口 53)']
+            ]
+        },
+        'dns-nyu': {
+            title: 'dns.nyu.edu', type: '本地 DNS 服务器',
+            description: 'NYU 的本地 DNS 服务器，代理 cse.nyu.edu 执行迭代查询并缓存结果。',
+            fields: [
+                ['主机名', 'dns.nyu.edu'],
+                ['角色', '本地 DNS 服务器（默认名称服务器）'],
+                ['软件', 'BIND 或类似 DNS 服务软件'],
+                ['功能', '代理转发查询、缓存结果'],
+                ['协议', 'DNS over UDP (端口 53)']
+            ]
+        },
+        'root': {
+            title: 'Root DNS Server', type: '根 DNS 服务器',
+            description: '全球分布的根 DNS 服务器之一（约 2000 个实例，13 个逻辑根）。负责返回 TLD 服务器地址。',
+            fields: [
+                ['类型', '根 DNS 服务器'],
+                ['数量', '约 2000 个实例，13 个逻辑根'],
+                ['管理', '12 个不同组织'],
+                ['功能', '返回顶级域 (TLD) 服务器地址'],
+                ['协议', 'DNS over UDP (端口 53)']
+            ]
+        },
+        'edu-tld': {
+            title: '.edu TLD Server', type: '顶级域 DNS 服务器',
+            description: '负责 .edu 顶级域的 TLD 服务器，由 Educause 维护。返回 umass.edu 的权威 DNS 服务器地址。',
+            fields: [
+                ['类型', 'TLD (顶级域) DNS 服务器'],
+                ['顶级域', '.edu'],
+                ['管理', 'Educause'],
+                ['功能', '返回 .edu 下各域的权威 DNS 服务器地址'],
+                ['协议', 'DNS over UDP (端口 53)']
+            ]
+        },
+        'auth': {
+            title: 'dns.umass.edu', type: '权威 DNS 服务器',
+            description: 'University of Massachusetts 的权威 DNS 服务器，负责维护 umass.edu 域下所有主机的 DNS 记录。',
+            fields: [
+                ['主机名', 'dns.umass.edu'],
+                ['类型', '权威 DNS 服务器'],
+                ['权威域', 'umass.edu'],
+                ['功能', '返回该域下主机的 A 记录（IP 地址）'],
+                ['协议', 'DNS over UDP (端口 53)']
+            ]
+        },
+        'gaia': {
+            title: 'gaia.cs.umass.edu', type: '目标主机',
+            description: 'UMass Amherst 计算机系的服务器，是本实验中 DNS 查询的目标。它本身不参与 DNS 解析过程，只是被查询的主机名。',
+            fields: [
+                ['主机名', 'gaia.cs.umass.edu'],
+                ['所属域', 'cs.umass.edu (umass.edu 的子域)'],
+                ['角色', '被查询的目标主机'],
+                ['IP 地址', '128.119.245.12 (示例值，可能变化)'],
+                ['说明', '此主机不参与 DNS 解析过程']
+            ]
+        }
+    };
+
+    // Node center positions (must match SVG node centers)
+    const NODE_POSITIONS = {
+        'cse':      { x: 225, y: 450 },
+        'dns-nyu':  { x: 225, y: 240 },
+        'root':     { x: 225, y: 80 },
+        'edu-tld':  { x: 675, y: 80 },
+        'auth':     { x: 675, y: 240 },
+        'gaia':     { x: 675, y: 450 }
+    };
+
+    /**
+     * steps 数组：驱动整个动画逻辑。
+     * 修改此数组即可替换实验流程。
+     * 每个 step 包含：id, title, description, packet (可 null), nodeStates
+     */
+    const steps = [
+        {
+            id: 0,
+            title: '初始状态',
+            description: '主机 cse.nyu.edu 需要知道 gaia.cs.umass.edu 的 IP 地址。DNS 解析即将开始。点击"播放"自动执行，或"单步"逐步观察。',
+            packet: null,
+            nodeStates: { 'cse': 'idle', 'dns-nyu': 'idle', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 1,
+            title: '步骤 1：递归查询 (cse.nyu.edu → dns.nyu.edu)',
+            description: 'cse.nyu.edu 向其本地 DNS 服务器 dns.nyu.edu 发送递归查询，请求解析 gaia.cs.umass.edu。RD（Recursion Desired）标志位为 1，表示要求服务器代为完成递归查询。',
+            packet: {
+                from: 'cse', to: 'dns-nyu', label: 'DNS Query', sublabel: 'gaia.cs.umass.edu?',
+                info: {
+                    type: 'DNS 查询报文（递归）',
+                    fields: [
+                        ['Transaction ID', '0x1234 (示例)'],
+                        ['Flags', '0x0100 — 标准查询, RD=1 (递归期望)'],
+                        ['Questions', '1'],
+                        ['Answer RRs', '0'],
+                        ['Authority RRs', '0'],
+                        ['Additional RRs', '0'],
+                        ['查询名', 'gaia.cs.umass.edu'],
+                        ['查询类型', 'A (主机地址)'],
+                        ['查询类', 'IN (Internet)']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'sending', 'dns-nyu': 'receiving', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 2,
+            title: '步骤 2：迭代查询 (dns.nyu.edu → Root DNS)',
+            description: 'dns.nyu.edu 没有缓存该记录，向根 DNS 服务器发送迭代查询。根服务器不会直接返回最终答案，而是返回下一步应查询的服务器地址（referral）。',
+            packet: {
+                from: 'dns-nyu', to: 'root', label: 'DNS Query', sublabel: 'gaia.cs.umass.edu?',
+                info: {
+                    type: 'DNS 查询报文（迭代）',
+                    fields: [
+                        ['Transaction ID', '0x5678 (示例)'],
+                        ['Flags', '0x0000 — 标准查询, RD=0'],
+                        ['Questions', '1'],
+                        ['Answer RRs', '0'],
+                        ['查询名', 'gaia.cs.umass.edu'],
+                        ['查询类型', 'A (主机地址)'],
+                        ['查询类', 'IN (Internet)']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'sending', 'root': 'receiving', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 3,
+            title: '步骤 3：根服务器响应（.edu TLD 指引）',
+            description: '根 DNS 服务器注意到查询名以 .edu 结尾，返回负责 .edu 顶级域的 TLD 服务器 IP 地址列表。dns.nyu.edu 获得下一步查询目标。',
+            packet: {
+                from: 'root', to: 'dns-nyu', label: 'DNS Reply', sublabel: '.edu TLD 地址',
+                info: {
+                    type: 'DNS 响应报文（Referral）',
+                    fields: [
+                        ['Transaction ID', '0x5678'],
+                        ['Flags', '0x8000 — 响应, AA=0, RCODE=0'],
+                        ['Questions', '1 (echoed)'],
+                        ['Answer RRs', '0 (根不知道最终答案)'],
+                        ['Authority RRs', 'NS 记录（edu TLD 服务器）'],
+                        ['Additional RRs', 'A 记录（TLD 服务器 IP）'],
+                        ['Authority', 'edu. IN NS a.edu-servers.net.'],
+                        ['Additional', 'a.edu-servers.net. IN A 192.12.94.30']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'receiving', 'root': 'sending', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 4,
+            title: '步骤 4：迭代查询 (.edu TLD)',
+            description: 'dns.nyu.edu 根据根服务器指引，向 .edu TLD 服务器发送查询，询问 gaia.cs.umass.edu 的 IP 地址。',
+            packet: {
+                from: 'dns-nyu', to: 'edu-tld', label: 'DNS Query', sublabel: 'gaia.cs.umass.edu?',
+                info: {
+                    type: 'DNS 查询报文（迭代）',
+                    fields: [
+                        ['Transaction ID', '0x9ABC (示例)'],
+                        ['Flags', '0x0000 — 标准查询, RD=0'],
+                        ['Questions', '1'],
+                        ['Answer RRs', '0'],
+                        ['查询名', 'gaia.cs.umass.edu'],
+                        ['查询类型', 'A (主机地址)'],
+                        ['查询类', 'IN (Internet)']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'sending', 'root': 'idle', 'edu-tld': 'receiving', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 5,
+            title: '步骤 5：TLD 服务器响应（权威服务器指引）',
+            description: '.edu TLD 服务器查看 umass.edu 后缀，返回负责 umass.edu 的权威 DNS 服务器 dns.umass.edu 的 IP 地址。',
+            packet: {
+                from: 'edu-tld', to: 'dns-nyu', label: 'DNS Reply', sublabel: 'dns.umass.edu',
+                info: {
+                    type: 'DNS 响应报文（Referral）',
+                    fields: [
+                        ['Transaction ID', '0x9ABC'],
+                        ['Flags', '0x8000 — 响应, RCODE=0'],
+                        ['Questions', '1 (echoed)'],
+                        ['Answer RRs', '0 (TLD 不知道最终答案)'],
+                        ['Authority RRs', 'NS 记录（umass.edu 权威服务器）'],
+                        ['Additional RRs', 'A 记录（权威服务器 IP）'],
+                        ['Authority', 'umass.edu. IN NS dns.umass.edu.'],
+                        ['Additional', 'dns.umass.edu. IN A 128.119.40.9']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'receiving', 'root': 'idle', 'edu-tld': 'sending', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 6,
+            title: '步骤 6：迭代查询（权威 DNS 服务器）',
+            description: 'dns.nyu.edu 根据 TLD 服务器指引，向 umass.edu 的权威 DNS 服务器 dns.umass.edu 发送查询。',
+            packet: {
+                from: 'dns-nyu', to: 'auth', label: 'DNS Query', sublabel: 'gaia.cs.umass.edu?',
+                info: {
+                    type: 'DNS 查询报文（迭代）',
+                    fields: [
+                        ['Transaction ID', '0xDEF0 (示例)'],
+                        ['Flags', '0x0000 — 标准查询, RD=0'],
+                        ['Questions', '1'],
+                        ['Answer RRs', '0'],
+                        ['查询名', 'gaia.cs.umass.edu'],
+                        ['查询类型', 'A (主机地址)'],
+                        ['查询类', 'IN (Internet)']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'sending', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'receiving', 'gaia': 'idle' }
+        },
+        {
+            id: 7,
+            title: '步骤 7：权威服务器响应（A 记录）',
+            description: 'dns.umass.edu 在其区域文件中找到 gaia.cs.umass.edu 的 A 记录，返回 IP 地址。AA (Authoritative Answer) 标志位置 1，表示这是权威回答。',
+            packet: {
+                from: 'auth', to: 'dns-nyu', label: 'DNS Reply', sublabel: 'A: 128.119.245.12',
+                info: {
+                    type: 'DNS 响应报文（权威回答）',
+                    fields: [
+                        ['Transaction ID', '0xDEF0'],
+                        ['Flags', '0x8400 — 响应, AA=1 (权威回答), RCODE=0'],
+                        ['Questions', '1 (echoed)'],
+                        ['Answer RRs', '1'],
+                        ['Authority RRs', '0'],
+                        ['Additional RRs', '0'],
+                        ['Answer', 'gaia.cs.umass.edu. IN A 128.119.245.12'],
+                        ['TTL', '86400 秒 (24 小时, 示例值)']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'waiting', 'dns-nyu': 'receiving', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'sending', 'gaia': 'idle' }
+        },
+        {
+            id: 8,
+            title: '步骤 8：最终响应 (dns.nyu.edu → cse.nyu.edu)',
+            description: 'dns.nyu.edu 将解析结果返回给 cse.nyu.edu，同时将该记录缓存（TTL 期间内有效）。cse.nyu.edu 获得了 gaia.cs.umass.edu 的 IP 地址 128.119.245.12。',
+            packet: {
+                from: 'dns-nyu', to: 'cse', label: 'DNS Reply', sublabel: '128.119.245.12',
+                info: {
+                    type: 'DNS 响应报文（最终回答）',
+                    fields: [
+                        ['Transaction ID', '0x1234 (与步骤 1 匹配)'],
+                        ['Flags', '0x8180 — 响应, RD=1, RA=1 (递归可用), RCODE=0'],
+                        ['Questions', '1 (echoed)'],
+                        ['Answer RRs', '1'],
+                        ['Authority RRs', '0'],
+                        ['Additional RRs', '0'],
+                        ['Answer', 'gaia.cs.umass.edu. IN A 128.119.245.12'],
+                        ['说明', 'dns.nyu.edu 已缓存此记录']
+                    ]
+                }
+            },
+            nodeStates: { 'cse': 'receiving', 'dns-nyu': 'sending', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'idle' }
+        },
+        {
+            id: 9,
+            title: '✅ DNS 解析完成',
+            description: '解析完成！cse.nyu.edu 成功获得了 gaia.cs.umass.edu 的 IP 地址 (128.119.245.12)。共发送 8 条 DNS 报文（4 查询 + 4 响应）。dns.nyu.edu 已缓存此记录，后续相同查询可直接返回。',
+            packet: null,
+            nodeStates: { 'cse': 'complete', 'dns-nyu': 'complete', 'root': 'idle', 'edu-tld': 'idle', 'auth': 'idle', 'gaia': 'complete' }
+        }
+    ];
+
+    /* ==================== State ==================== */
+    let currentStep = 0;
+    let isPlaying = false;
+    let isAnimating = false;
+    let animationSpeed = 1;
+    let currentAnimationId = null;
+    let playTimeoutId = null;
+
+    /* ==================== DOM References ==================== */
+    const packetsGroup    = document.getElementById('packetsGroup');
+    const btnPlay         = document.getElementById('btnPlay');
+    const btnPause        = document.getElementById('btnPause');
+    const btnStep         = document.getElementById('btnStep');
+    const btnReset        = document.getElementById('btnReset');
+    const speedSelect     = document.getElementById('speedSelect');
+    const stepCounter     = document.getElementById('stepCounter');
+    const stepTitle       = document.getElementById('stepTitle');
+    const stepDescription = document.getElementById('stepDescription');
+    const infoPanelContent= document.getElementById('infoPanelContent');
+    const themeToggle     = document.getElementById('themeToggle');
+    const themeIcon       = document.getElementById('themeIcon');
+    const themeLabel      = document.getElementById('themeLabel');
+
+    /* ==================== Theme Management ==================== */
+    function getSystemTheme() {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    function setTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('dns-demo-theme', theme);
+        if (theme === 'dark') {
+            themeIcon.textContent = '☀️';
+            themeLabel.textContent = '浅色模式';
+        } else {
+            themeIcon.textContent = '🌙';
+            themeLabel.textContent = '深色模式';
+        }
+    }
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme') || 'light';
+        setTheme(current === 'dark' ? 'light' : 'dark');
+    }
+    function initTheme() {
+        const saved = localStorage.getItem('dns-demo-theme');
+        setTheme(saved || getSystemTheme());
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            if (!localStorage.getItem('dns-demo-theme')) setTheme(e.matches ? 'dark' : 'light');
+        });
+    }
+
+    /* ==================== UI Updates ==================== */
+    function updateStepUI() {
+        const step = steps[currentStep];
+        stepCounter.textContent = `步骤 ${currentStep} / ${steps.length - 1}`;
+        stepTitle.textContent = step.title;
+        stepDescription.textContent = step.description;
+        Object.entries(step.nodeStates).forEach(([nodeId, state]) => {
+            const nodeEl = document.getElementById(`node-${nodeId}`);
+            if (nodeEl) nodeEl.setAttribute('class', `node-group node-state-${state}`);
+        });
+    }
+    function updateControlButtons() {
+        if (isPlaying) {
+            btnPlay.disabled = true;
+            btnPause.disabled = false;
+            btnStep.disabled = true;
+        } else {
+            btnPlay.disabled = isAnimating;
+            btnPause.disabled = true;
+            btnStep.disabled = isAnimating || currentStep >= steps.length - 1;
+        }
+    }
+    function showNodeInfo(nodeId) {
+        const info = NODE_INFO[nodeId];
+        if (!info) return;
+        let html = `<div class="field-group">
+            <div class="field-group-title">${info.title} (${info.type})</div>
+            <div class="field-desc">${info.description}</div></div>
+            <div class="field-group"><div class="field-group-title">详细属性</div>`;
+        info.fields.forEach(([k, v]) => {
+            html += `<div class="field"><span class="field-key">${k}:</span><span class="field-value">${v}</span></div>`;
+        });
+        infoPanelContent.innerHTML = html + '</div>';
+    }
+    function showPacketInfo(packetInfo) {
+        if (!packetInfo) return;
+        let html = `<div class="field-group"><div class="field-group-title">${packetInfo.type}</div></div>
+            <div class="field-group"><div class="field-group-title">报文关键字段</div>`;
+        packetInfo.fields.forEach(([k, v]) => {
+            html += `<div class="field"><span class="field-key">${k}:</span><span class="field-value">${v}</span></div>`;
+        });
+        infoPanelContent.innerHTML = html + '</div>';
+    }
+    function flashButton(btn) {
+        btn.classList.add('btn-flash');
+        setTimeout(() => btn.classList.remove('btn-flash'), 350);
+    }
+
+    /* ==================== Animation Engine ==================== */
+    function clearPackets() { packetsGroup.innerHTML = ''; }
+
+    function getLinkId(from, to) {
+        const pairs = {
+            'cse|dns-nyu': 'link-cse-dns',
+            'dns-nyu|root': 'link-dns-root',
+            'dns-nyu|edu-tld': 'link-dns-tld',
+            'dns-nyu|auth': 'link-dns-auth',
+        };
+        return pairs[`${from}|${to}`] || pairs[`${to}|${from}`] || '';
+    }
+
+    function animatePacket(packet, callback) {
+        isAnimating = true;
+        updateControlButtons();
+        const fromPos = NODE_POSITIONS[packet.from];
+        const toPos   = NODE_POSITIONS[packet.to];
+
+        const ns = 'http://www.w3.org/2000/svg';
+        const group = document.createElementNS(ns, 'g');
+        group.setAttribute('class', 'packet-group');
+
+        const rect = document.createElementNS(ns, 'rect');
+        rect.setAttribute('class', 'packet-box');
+        rect.setAttribute('width', '86');
+        rect.setAttribute('height', '30');
+        rect.setAttribute('x', '-43');
+        rect.setAttribute('y', '-15');
+
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('class', 'packet-label');
+        label.setAttribute('x', '0'); label.setAttribute('y', '-2');
+        label.textContent = packet.label;
+
+        const sublabel = document.createElementNS(ns, 'text');
+        sublabel.setAttribute('class', 'packet-label');
+        sublabel.setAttribute('x', '0'); sublabel.setAttribute('y', '9');
+        sublabel.setAttribute('font-size', '8');
+        sublabel.textContent = packet.sublabel;
+
+        group.appendChild(rect);
+        group.appendChild(label);
+        group.appendChild(sublabel);
+        group.addEventListener('click', () => showPacketInfo(packet.info));
+
+        const linkId = getLinkId(packet.from, packet.to);
+        const linkEl = document.getElementById(linkId);
+        if (linkEl) linkEl.classList.add('link-line-active');
+
+        group.setAttribute('transform', `translate(${fromPos.x}, ${fromPos.y})`);
+        packetsGroup.appendChild(group);
+
+        const duration  = 2000 / animationSpeed;
+        const startTime = performance.now();
+
+        function animate(currentTime) {
+            const elapsed  = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const ease = progress < 0.5
+                ? 2 * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+            const x = fromPos.x + (toPos.x - fromPos.x) * ease;
+            const y = fromPos.y + (toPos.y - fromPos.y) * ease;
+            group.setAttribute('transform', `translate(${x}, ${y})`);
+
+            if (progress < 1) {
+                currentAnimationId = requestAnimationFrame(animate);
+            } else {
+                packetsGroup.removeChild(group);
+                if (linkEl) linkEl.classList.remove('link-line-active');
+                isAnimating = false;
+                updateControlButtons();
+                if (callback) callback();
+            }
+        }
+        currentAnimationId = requestAnimationFrame(animate);
+    }
+
+    /* ==================== Control Functions ==================== */
+    function play() {
+        if (isPlaying || isAnimating || currentStep >= steps.length - 1) return;
+        isPlaying = true;
+        updateControlButtons();
+        flashButton(btnPlay);
+        executeNextStep();
+    }
+    function pause() {
+        if (!isPlaying) return;
+        isPlaying = false;
+        if (playTimeoutId) { clearTimeout(playTimeoutId); playTimeoutId = null; }
+        updateControlButtons();
+        flashButton(btnPause);
+    }
+    function reset() {
+        isPlaying = false;
+        isAnimating = false;
+        if (currentAnimationId) { cancelAnimationFrame(currentAnimationId); currentAnimationId = null; }
+        if (playTimeoutId) { clearTimeout(playTimeoutId); playTimeoutId = null; }
+        clearPackets();
+        currentStep = 0;
+        updateStepUI();
+        updateControlButtons();
+        infoPanelContent.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem;">点击拓扑图中的节点或移动中的数据包查看详细信息。</p>';
+        document.querySelectorAll('.link-line').forEach(el => el.classList.remove('link-line-active'));
+        flashButton(btnReset);
+    }
+    function step() {
+        if (isAnimating || isPlaying || currentStep >= steps.length - 1) return;
+        flashButton(btnStep);
+        executeStep(currentStep + 1);
+    }
+    function togglePlayPause() {
+        isPlaying ? pause() : play();
+    }
+
+    function executeStep(stepIndex) {
+        if (stepIndex > steps.length - 1) return;
+        currentStep = stepIndex;
+        updateStepUI();
+        const stepData = steps[stepIndex];
+
+        const onComplete = () => {
+            if (isPlaying && currentStep < steps.length - 1) {
+                const delay = 800 / animationSpeed;
+                playTimeoutId = setTimeout(() => executeNextStep(), delay);
+            } else if (isPlaying && currentStep >= steps.length - 1) {
+                isPlaying = false;
+                updateControlButtons();
+            }
+        };
+
+        if (stepData.packet) {
+            animatePacket(stepData.packet, onComplete);
+        } else {
+            if (isPlaying && currentStep < steps.length - 1) {
+                const delay = 500 / animationSpeed;
+                playTimeoutId = setTimeout(() => executeNextStep(), delay);
+            } else if (isPlaying && currentStep >= steps.length - 1) {
+                isPlaying = false;
+                updateControlButtons();
+            }
+        }
+    }
+    function executeNextStep() {
+        if (currentStep < steps.length - 1) executeStep(currentStep + 1);
+    }
+
+    /* ==================== Shortcuts ==================== */
+    function bindShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            const tag = document.activeElement.tagName.toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement.isContentEditable) return;
+            const shortcut = SHORTCUTS[e.code];
+            if (!shortcut) return;
+            if (e.code === 'Space' || e.code === 'ArrowRight') e.preventDefault();
+            switch (shortcut.action) {
+                case 'togglePlayPause': togglePlayPause(); break;
+                case 'step':            step();            break;
+                case 'reset':           reset();           break;
+                case 'toggleTheme':     toggleTheme();     break;
+            }
+        });
+    }
+
+    /* ==================== Event Binding ==================== */
+    function bindControlEvents() {
+        btnPlay.addEventListener('click', play);
+        btnPause.addEventListener('click', pause);
+        btnStep.addEventListener('click', step);
+        btnReset.addEventListener('click', reset);
+        speedSelect.addEventListener('change', (e) => { animationSpeed = parseFloat(e.target.value); });
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+    function bindTopologyEvents() {
+        document.querySelectorAll('.node-group').forEach(node => {
+            node.addEventListener('click', () => showNodeInfo(node.getAttribute('data-node')));
+        });
+    }
+
+    /* ==================== Initialization ==================== */
+    function init() {
+        initTheme();
+        bindControlEvents();
+        bindShortcuts();
+        bindTopologyEvents();
+        updateStepUI();
+        updateControlButtons();
+    }
+    document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
