@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>BitTorrent 文件分发 · 可交互动画实验</title>
+
+<!-- 提前设置主题，避免闪烁：首次访问跟随系统，之后读取 localStorage -->
+<script>
+(function () {
+  var KEY = 'bt-lab-theme';
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  var mode = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', mode);
+})();
+</script>
+
+<style>
+/* ================================================================
+   一、主题变量（所有颜色集中于此，禁止在组件中硬编码颜色）
+   语义色在两种主题下含义一致，仅调整明度/饱和度：
+   紫=tracker 协议  蓝=连接/上传  青=握手  橙=控制消息
+   红=choke 阻塞    绿=数据传输/下载  金=完成  黄=等待
+================================================================ */
+:root{
+  --font-mono: ui-monospace,'Cascadia Code','JetBrains Mono','SF Mono',Consolas,'Liberation Mono',monospace;
+  --font-body:'Segoe UI',system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  color-scheme: light;
+  --bg:#eef1f7;            --bg-glow1:#dde8ff;       --bg-glow2:#d9f3e6;
+  --panel:#ffffff;         --panel-2:#f4f6fb;        --panel-3:#e8edf5;
+  --text:#182236;          --text-dim:#5a6478;
+  --border:#d4dae6;        --border-strong:#b7c0d2;
+  --accent:#0e9f6e;        --accent-deep:#0a7d56;
+  --blue:#2f6fe0;  --purple:#7b4fd8;  --cyan:#0e98a8;
+  --orange:#d97a06;--red:#d23b3b;     --gold:#c98a06; --yellow:#c9a012;
+  --card:#ffffff;          --card-border:#c9d2e0;
+  --cell-off:#e3e8f1;      --cell-off-border:#c4cddd;
+  --link-faint:#c3ccdc;    --link-up:#2f6fe0;        --link-tracker:#b3a4e0;
+  --grid-dot:#d8deeb;      --kbd-bg:#f1f4fa;
+  --shadow:0 10px 30px rgba(23,32,54,.08);
+  --dot-idle:#8b94a7;
+  --pill-tracker-bg:#efe9fc;   --pill-tracker-bd:#8f6ae0;   --pill-tracker-tx:#4a2d91;
+  --pill-connect-bg:#e4eefc;   --pill-connect-bd:#4a83e8;   --pill-connect-tx:#1d4f9c;
+  --pill-handshake-bg:#e0f4f6; --pill-handshake-bd:#22a6b8; --pill-handshake-tx:#0b5e6a;
+  --pill-control-bg:#fdeeda;   --pill-control-bd:#e08a12;   --pill-control-tx:#8a4d02;
+  --pill-choke-bg:#fbe3e3;     --pill-choke-bd:#d84a4a;     --pill-choke-tx:#8f1d1d;
+  --pill-data-bg:#dcf5e7;      --pill-data-bd:#17a35f;      --pill-data-tx:#0b5c38;
+}
+[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0c1220;            --bg-glow1:#15223e;       --bg-glow2:#0e2b23;
+  --panel:#131b2e;         --panel-2:#182238;        --panel-3:#1f2b46;
+  --text:#e8edf7;          --text-dim:#9fb0c8;
+  --border:#2a3654;        --border-strong:#3c4d75;
+  --accent:#34d289;        --accent-deep:#57e2a1;
+  --blue:#6aa6ff;  --purple:#b48cff;  --cyan:#4fd0e0;
+  --orange:#ffb454;--red:#ff6b6b;     --gold:#ffd166; --yellow:#ffd75e;
+  --card:#16203a;          --card-border:#33415f;
+  --cell-off:#233049;      --cell-off-border:#33415f;
+  --link-faint:#33405e;    --link-up:#6aa6ff;        --link-tracker:#5d4d8f;
+  --grid-dot:#1b2540;      --kbd-bg:#1c2742;
+  --shadow:0 12px 34px rgba(0,0,0,.45);
+  --dot-idle:#7d8aa5;
+  --pill-tracker-bg:#251b41;   --pill-tracker-bd:#9a78ea;   --pill-tracker-tx:#cbb6ff;
+  --pill-connect-bg:#12233f;   --pill-connect-bd:#5f92ec;   --pill-connect-tx:#a8c6ff;
+  --pill-handshake-bg:#0d2b31; --pill-handshake-bd:#3fc0d2; --pill-handshake-tx:#9fe6ef;
+  --pill-control-bg:#33230d;   --pill-control-bd:#f0a04b;   --pill-control-tx:#ffc98a;
+  --pill-choke-bg:#38141a;     --pill-choke-bd:#f16a6a;     --pill-choke-tx:#ffa2a2;
+  --pill-data-bg:#0d2f1e;      --pill-data-bd:#3ecf8e;      --pill-data-tx:#8ff0c0;
+}
+
+/* ============ 二、基础与布局 ============ */
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:var(--font-body); background:var(--bg); color:var(--text);
+  font-size:14px; line-height:1.55; min-height:100vh;
+  transition:background-color .35s ease, color .35s ease;
+}
+body::before{
+  content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(900px 520px at 10% -10%, var(--bg-glow1), transparent 62%),
+    radial-gradient(820px 480px at 98% 6%,  var(--bg-glow2), transparent 58%);
+}
+.mono{font-family:var(--font-mono)}
+.page{max-width:1560px;margin:0 auto;padding:0 18px}
+
+/* 顶栏（标题区） */
+.topbar{
+  position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:14px;
+  padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--border);
+  transition:background-color .35s,border-color .35s;
+}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:3px;width:30px;height:30px}
+.logo i{border:2px solid var(--accent);border-radius:3px}
+.logo i.f{background:var(--accent)}
+.brand-text .eyebrow{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.16em;color:var(--text-dim);text-transform:uppercase}
+.brand-text h1{font-family:var(--font-mono);font-size:20px;font-weight:800;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-chip{margin-left:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);border:1px solid var(--border);border-radius:99px;padding:3px 10px;white-space:nowrap}
+.topbar .spacer{flex:1}
+
+/* 按钮 */
+.btn{
+  display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:7px;
+  background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+  font:600 13px/1 var(--font-body);cursor:pointer;user-select:none;
+  transition:border-color .2s,background-color .25s,color .25s,transform .12s,box-shadow .25s;
+}
+.btn svg{display:block}
+.btn:hover{border-color:var(--accent);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.btn.primary{background:var(--accent-deep);border-color:var(--accent-deep);color:#fff}
+[data-theme="dark"] .btn.primary{color:#06130c}
+.btn.kbd-flash{
+  border-color:var(--accent)!important;
+  box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 32%, transparent)!important;
+  transform:translateY(-1px);
+}
+.theme-btn .ic{display:none}
+.theme-btn[data-mode="light"] .ic-moon{display:block}
+.theme-btn[data-mode="dark"]  .ic-sun{display:block}
+
+/* 主布局 */
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 384px;gap:16px;padding:16px 0 8px;align-items:start}
+@media (max-width:1180px){.layout{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);transition:background-color .35s,border-color .35s}
+.card-title{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;
+  font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.14em;
+  color:var(--text-dim);text-transform:uppercase;border-bottom:1px solid var(--border);
+}
+.card-title::before{content:'';width:8px;height:8px;background:var(--accent);border-radius:2px}
+
+/* 舞台 */
+.stage-card{overflow:hidden}
+.stage-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:11px 16px;border-bottom:1px solid var(--border)}
+.sh-label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.14em;color:var(--text-dim)}
+.pbar{width:150px;height:10px;border-radius:99px;background:var(--panel-3);overflow:hidden;border:1px solid var(--border)}
+.pfill{height:100%;width:0;background:linear-gradient(90deg,var(--accent-deep),var(--accent));transition:width .4s ease}
+.pfill.demo{transition:none;background:linear-gradient(90deg,var(--blue),var(--cyan))}
+.sh-pct{font-size:13px;font-weight:700;color:var(--accent-deep)}
+[data-theme="dark"] .sh-pct{color:var(--accent)}
+.sh-pct.demo-pct{color:var(--blue)}
+.sh-stats{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;border:1px solid var(--border);background:var(--panel-2);font-family:var(--font-mono);font-size:11.5px;color:var(--text-dim)}
+.chip b{color:var(--text);font-weight:700}
+.sw{width:9px;height:9px;border-radius:50%}
+.sw.gold{background:var(--gold)} .sw.green{background:var(--accent)}
+.stage-wrap{background:radial-gradient(var(--grid-dot) 1.1px, transparent 1.1px) 0 0/22px 22px, var(--panel)}
+.stage-wrap svg{display:block;width:100%;height:auto;user-select:none}
+
+/* SVG 元素 */
+text{transition:fill .35s ease}
+.card-rect,.cell,.rtrack,.rbar,.pill,.dot{transition:fill .35s ease,stroke .35s ease}
+.link{stroke:var(--link-faint);stroke-width:1.5;stroke-dasharray:5 6;opacity:.75;transition:stroke .35s,opacity .35s,stroke-width .3s}
+.link.up{stroke:var(--link-up);stroke-dasharray:none;opacity:.95;stroke-width:2}
+.link.justup{stroke:var(--gold);stroke-width:3.5}
+.link-tracker{stroke:var(--link-tracker);stroke-dasharray:2 6;stroke-width:1.6;opacity:.8}
+.node{cursor:pointer}
+.node .card-rect{fill:var(--card);stroke:var(--card-border);stroke-width:1.4}
+.node:hover .card-rect{stroke:var(--accent)}
+.node.is-complete .card-rect{stroke:var(--gold);stroke-width:2}
+.n-name{font:800 15px var(--font-mono);fill:var(--text)}
+.n-role{font:500 10px var(--font-mono);fill:var(--text-dim)}
+.n-pct{font:700 11.5px var(--font-mono);fill:var(--text)}
+.n-state{font:600 10.5px var(--font-mono);fill:var(--text-dim)}
+.dot{fill:var(--dot-idle)}
+.dot.st-wait,.dot.st-busy{fill:var(--yellow)}
+.dot.st-download{fill:var(--accent);animation:dotpulse 1.5s ease-in-out infinite}
+.dot.st-upload{fill:var(--blue);animation:dotpulse 1.5s ease-in-out infinite}
+.dot.st-complete{fill:var(--gold)}
+@keyframes dotpulse{50%{opacity:.45}}
+.cell{fill:var(--cell-off);stroke:var(--cell-off-border);stroke-width:1}
+.cell.on{fill:var(--accent)}
+.cell.new{animation:cellflash .85s ease}
+@keyframes cellflash{0%{fill:var(--gold)}100%{}}
+.rtrack{fill:var(--panel-3);stroke:var(--border);stroke-width:1}
+.rbar{fill:var(--blue);opacity:.9;transform-box:fill-box;transform-origin:50% 100%;transition:transform .45s ease,fill .35s}
+.rbar.rare{fill:var(--orange)}
+.rcount{font:700 11px var(--font-mono);fill:var(--text)}
+.rlabel{font:600 10.5px var(--font-mono);fill:var(--text-dim)}
+.rarc{cursor:pointer}
+.rside{font:500 10.5px var(--font-mono);fill:var(--text-dim)}
+.pkt{cursor:pointer}
+.pkt .pill{stroke-width:1.4}
+.pkt:hover .pill{stroke-width:2.6}
+.pkt text{font:600 11px var(--font-mono);pointer-events:none}
+.pkt .hit{fill:transparent}
+.pkt-tracker   .pill{fill:var(--pill-tracker-bg);  stroke:var(--pill-tracker-bd)}   .pkt-tracker   text{fill:var(--pill-tracker-tx)}
+.pkt-connect   .pill{fill:var(--pill-connect-bg);  stroke:var(--pill-connect-bd)}   .pkt-connect   text{fill:var(--pill-connect-tx)}
+.pkt-handshake .pill{fill:var(--pill-handshake-bg);stroke:var(--pill-handshake-bd)} .pkt-handshake text{fill:var(--pill-handshake-tx)}
+.pkt-control   .pill{fill:var(--pill-control-bg);  stroke:var(--pill-control-bd)}   .pkt-control   text{fill:var(--pill-control-tx)}
+.pkt-choke     .pill{fill:var(--pill-choke-bg);    stroke:var(--pill-choke-bd)}     .pkt-choke     text{fill:var(--pill-choke-tx)}
+.pkt-data      .pill{fill:var(--pill-data-bg);     stroke:var(--pill-data-bd)}      .pkt-data      text{fill:var(--pill-data-tx)}
+.ring{fill:none;stroke:var(--accent);stroke-width:2.5;transform-box:fill-box;transform-origin:center;animation:ring .55s ease-out forwards}
+@keyframes ring{from{transform:scale(.35);opacity:.95}to{transform:scale(2.2);opacity:0}}
+.banner{opacity:0;pointer-events:none;transition:opacity .5s ease}
+.banner.show{opacity:1}
+.banner-box{fill:var(--panel);stroke:var(--accent);stroke-width:1.6}
+.banner-t1{font:800 21px var(--font-mono);fill:var(--accent-deep)}
+[data-theme="dark"] .banner-t1{fill:var(--accent)}
+.banner-t2{font:500 12.5px var(--font-mono);fill:var(--text-dim)}
+
+/* 事件行 + 图例 */
+.evtline{display:flex;gap:9px;align-items:baseline;padding:8px 16px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:12px;color:var(--text-dim)}
+.evtline::before{content:'EVENT ▸';color:var(--accent);font-weight:700;flex:0 0 auto}
+.evtline.tick{animation:evtpop .4s ease}
+.evtline.err{color:var(--red)}
+@keyframes evtpop{from{opacity:.15;transform:translateY(4px)}}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;padding:10px 16px;border-top:1px solid var(--border);background:var(--panel-2)}
+.lg-group{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.lg-title{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;color:var(--text-dim)}
+.lg-item{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-dim)}
+.dotc{width:10px;height:10px;border-radius:3px;border:1.5px solid}
+.dotc.k-tracker{background:var(--pill-tracker-bg);border-color:var(--pill-tracker-bd)}
+.dotc.k-connect{background:var(--pill-connect-bg);border-color:var(--pill-connect-bd)}
+.dotc.k-handshake{background:var(--pill-handshake-bg);border-color:var(--pill-handshake-bd)}
+.dotc.k-control{background:var(--pill-control-bg);border-color:var(--pill-control-bd)}
+.dotc.k-choke{background:var(--pill-choke-bg);border-color:var(--pill-choke-bd)}
+.dotc.k-data{background:var(--pill-data-bg);border-color:var(--pill-data-bd)}
+.dotc.s-idle{background:var(--dot-idle);border-color:transparent;border-radius:50%}
+.dotc.s-wait{background:var(--yellow);border-color:transparent;border-radius:50%}
+.dotc.s-dl{background:var(--accent);border-color:transparent;border-radius:50%}
+.dotc.s-ul{background:var(--blue);border-color:transparent;border-radius:50%}
+.dotc.s-done{background:var(--gold);border-color:transparent;border-radius:50%}
+.lg-hint{font-size:11.5px;color:var(--text-dim);font-style:italic}
+
+/* 右侧面板 */
+.side{display:flex;flex-direction:column;gap:14px}
+.controls-body{padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+.transport{display:flex;gap:8px;flex-wrap:wrap}
+.transport .btn{flex:1;justify-content:center;min-width:96px}
+.speed-row{display:flex;align-items:center;gap:10px}
+.speed-row label{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;color:var(--text-dim)}
+.speed-row input[type=range]{flex:1;accent-color:var(--accent);cursor:pointer}
+.speed-row .val{font-family:var(--font-mono);font-size:12.5px;font-weight:700;min-width:44px;text-align:right}
+kbd{font-family:var(--font-mono);font-size:10.5px;background:var(--kbd-bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:1px 6px;color:var(--text)}
+.kbd-row{display:flex;flex-wrap:wrap;gap:7px 13px;font-size:11.5px;color:var(--text-dim)}
+.kbd-row span{display:inline-flex;align-items:center;gap:5px}
+.step-body{padding:13px 14px 15px}
+.step-num{font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--accent-deep);display:flex;align-items:center;justify-content:space-between}
+[data-theme="dark"] .step-num{color:var(--accent)}
+.step-body h3{font-size:16.5px;font-weight:800;margin:5px 0 8px;line-height:1.35}
+.step-body .desc{font-size:13px;color:var(--text);line-height:1.75}
+.step-body .desc b{color:var(--accent-deep)}
+[data-theme="dark"] .step-body .desc b{color:var(--accent)}
+.dots{display:flex;gap:9px;margin-top:13px;flex-wrap:wrap}
+.dot-btn{width:11px;height:11px;transform:rotate(45deg);border-radius:2.5px;cursor:pointer;background:transparent;border:1.6px solid var(--border-strong);padding:0;transition:background-color .25s,border-color .25s,transform .2s}
+.dot-btn:hover{transform:rotate(45deg) scale(1.25)}
+.dot-btn.done{background:var(--blue);border-color:var(--blue)}
+.dot-btn.cur{background:var(--accent);border-color:var(--accent);animation:dotpulse 1.4s infinite}
+.info-body{padding:12px 14px;min-height:150px}
+.info-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px}
+.info-head h4{font-family:var(--font-mono);font-size:14px;font-weight:800}
+.badge{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:99px;border:1px solid}
+.badge.b-tracker{background:var(--pill-tracker-bg);border-color:var(--pill-tracker-bd);color:var(--pill-tracker-tx)}
+.badge.b-connect{background:var(--pill-connect-bg);border-color:var(--pill-connect-bd);color:var(--pill-connect-tx)}
+.badge.b-handshake{background:var(--pill-handshake-bg);border-color:var(--pill-handshake-bd);color:var(--pill-handshake-tx)}
+.badge.b-control{background:var(--pill-control-bg);border-color:var(--pill-control-bd);color:var(--pill-control-tx)}
+.badge.b-choke{background:var(--pill-choke-bg);border-color:var(--pill-choke-bd);color:var(--pill-choke-tx)}
+.badge.b-data{background:var(--pill-data-bg);border-color:var(--pill-data-bd);color:var(--pill-data-tx)}
+.badge.b-node{background:var(--panel-3);border-color:var(--border-strong);color:var(--text-dim)}
+.badge.b-piece{background:var(--panel-3);border-color:var(--border-strong);color:var(--text-dim)}
+table.kv{width:100%;border-collapse:collapse}
+table.kv th,table.kv td{text-align:left;padding:5px 6px;border-bottom:1px dashed var(--border);vertical-align:top;font-size:12.3px}
+table.kv th{font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--text-dim);white-space:nowrap;width:92px;letter-spacing:.04em}
+table.kv td{font-family:var(--font-mono);word-break:break-all}
+.note{margin-top:9px;font-size:11.8px;color:var(--text-dim);line-height:1.65;border-left:3px solid var(--orange);padding:4px 0 4px 10px}
+.keys-body{padding:11px 14px}
+.keys-body ul{list-style:none;display:flex;flex-direction:column;gap:7px}
+.keys-body li{display:flex;align-items:center;gap:8px;font-size:12.3px;color:var(--text-dim)}
+.keys-body li .ks{flex:0 0 118px;display:flex;gap:4px;align-items:center}
+.keys-body li em{font-style:normal;color:var(--text)}
+.foot{margin:6px 0 26px;padding:16px 18px}
+.foot h3{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;color:var(--orange);margin-bottom:8px}
+.foot ul{list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:6px 22px}
+.foot li{font-size:12px;color:var(--text-dim);line-height:1.6;padding-left:14px;position:relative}
+.foot li::before{content:'▸';position:absolute;left:0;color:var(--orange)}
+.fine{margin-top:10px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;color:var(--text-dim)}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+
+<!-- ======================= 标题区 ======================= -->
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"><i class="f"></i><i></i><i></i><i class="f"></i></span>
+    <div class="brand-text">
+      <div class="eyebrow">计算机网络 · 应用层协议实验</div>
+      <h1>BitTorrent 文件分发</h1>
+    </div>
+    <span class="top-chip">swarm 演示 · 8 pieces · 4 peers</span>
+  </div>
+  <div class="spacer"></div>
+  <button id="btnTheme" class="btn theme-btn" data-mode="light" aria-label="切换主题" title="快捷键 T">
+    <span class="ic ic-sun" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M12.9 3.1l-1.4 1.4M4.5 11.5l-1.4 1.4"/></g></svg>
+    </span>
+    <span class="ic ic-moon" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16"><path d="M13.6 9.7A5.7 5.7 0 0 1 6.3 2.4a5.7 5.7 0 1 0 7.3 7.3z" fill="currentColor"/></svg>
+    </span>
+    <span class="lbl">深色</span>
+  </button>
+</header>
+
+<div class="page">
+  <main class="layout">
+
+    <!-- ======================= 实验场景区 ======================= -->
+    <section class="card stage-card" aria-label="实验场景区">
+      <div class="stage-head">
+        <span class="sh-label" title="仅当 piece 传输完成时变化（自第 7 步开始）">SWARM 分片完成度</span>
+        <div class="pbar" role="progressbar" aria-label="swarm 分片完成度"><div class="pfill" id="swarmFill"></div></div>
+        <span class="sh-pct mono" id="swarmPct">0%</span>
+        <span class="sh-label" title="随播放实时更新的演示时间线进度">演示进度</span>
+        <div class="pbar" role="progressbar" aria-label="演示进度"><div class="pfill demo" id="demoFill"></div></div>
+        <span class="sh-pct mono demo-pct" id="demoPct">0%</span>
+        <div class="sh-stats">
+          <span class="chip"><i class="sw gold"></i>Seeder <b id="stSeed">0</b></span>
+          <span class="chip"><i class="sw green"></i>Leecher <b id="stLeech">0</b></span>
+          <span class="chip">announce <b id="stAnn">0</b></span>
+          <span class="chip">在线 <b id="stOnline">0</b></span>
+        </div>
+      </div>
+
+      <div class="stage-wrap">
+        <svg id="stage" viewBox="0 0 1080 700" role="img" aria-label="BitTorrent 网络拓扑动画">
+          <rect id="stageBg" x="0" y="0" width="1080" height="700" fill="transparent"></rect>
+          <g id="layerLinks"></g>
+          <g id="layerRarity"></g>
+          <g id="layerNodes"></g>
+          <g id="layerFx"></g>
+          <g id="layerPackets"></g>
+          <g id="banner" class="banner">
+            <rect class="banner-box" x="252" y="296" width="576" height="96" rx="12"></rect>
+            <text class="banner-t1" x="540" y="336" text-anchor="middle">✓ 演示完成 · 全员 Seeder</text>
+            <text class="banner-t2" x="540" y="366" text-anchor="middle">按 R 重置，或按 空格 重新播放</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="evtline" id="evtLine" aria-live="polite">准备就绪</div>
+
+      <!-- 图例区 -->
+      <div class="legend">
+        <div class="lg-group">
+          <span class="lg-title">数据包</span>
+          <span class="lg-item"><i class="dotc k-tracker"></i>Tracker 协议</span>
+          <span class="lg-item"><i class="dotc k-connect"></i>TCP 连接</span>
+          <span class="lg-item"><i class="dotc k-handshake"></i>BT 握手</span>
+          <span class="lg-item"><i class="dotc k-control"></i>控制消息</span>
+          <span class="lg-item"><i class="dotc k-choke"></i>choke 阻塞</span>
+          <span class="lg-item"><i class="dotc k-data"></i>数据块</span>
+        </div>
+        <div class="lg-group">
+          <span class="lg-title">节点状态</span>
+          <span class="lg-item"><i class="dotc s-idle"></i>待机</span>
+          <span class="lg-item"><i class="dotc s-wait"></i>等待</span>
+          <span class="lg-item"><i class="dotc s-dl"></i>下载</span>
+          <span class="lg-item"><i class="dotc s-ul"></i>上传</span>
+          <span class="lg-item"><i class="dotc s-done"></i>完成</span>
+        </div>
+        <div class="lg-group"><span class="lg-hint">点击 节点 / 数据包 / 热度条看详情；SWARM 完成度自第 7 步 piece 传输起才会变化</span></div>
+      </div>
+    </section>
+
+    <!-- ======================= 右侧面板 ======================= -->
+    <aside class="side">
+      <div class="card">
+        <h2 class="card-title">控制面板</h2>
+        <div class="controls-body">
+          <div class="transport">
+            <button id="btnPlay"  class="btn primary" aria-label="播放或暂停"></button>
+            <button id="btnStep"  class="btn" aria-label="单步执行"></button>
+            <button id="btnReset" class="btn" aria-label="重置"></button>
+          </div>
+          <div class="speed-row">
+            <label for="speedRange">速度</label>
+            <input type="range" id="speedRange" min="0.5" max="3" step="0.25" value="1" aria-label="播放速度">
+            <span class="val" id="speedVal">1×</span>
+          </div>
+          <div class="kbd-row">
+            <span><kbd>Space</kbd>播放/暂停</span>
+            <span><kbd>S</kbd>/<kbd>→</kbd>单步</span>
+            <span><kbd>R</kbd>重置</span>
+            <span><kbd>T</kbd>主题</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">当前步骤说明</h2>
+        <div class="step-body">
+          <div class="step-num"><span id="stepNum">STEP 01 / 11</span><span>点击菱形可跳转</span></div>
+          <h3 id="stepTitle">—</h3>
+          <div class="desc" id="stepDesc">—</div>
+          <div class="dots" id="stepDots" role="group" aria-label="步骤跳转"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">信息面板</h2>
+        <div class="info-body" id="infoBody"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">快捷键</h2>
+        <div class="keys-body">
+          <ul>
+            <li><span class="ks"><kbd>Space</kbd></span><em>播放 / 暂停（切换）</em></li>
+            <li><span class="ks"><kbd>S</kbd> 或 <kbd>→</kbd></span><em>单步执行（到下一步边界暂停）</em></li>
+            <li><span class="ks"><kbd>R</kbd></span><em>重置演示</em></li>
+            <li><span class="ks"><kbd>T</kbd></span><em>切换深色 / 浅色主题</em></li>
+          </ul>
+          <p class="note">焦点位于输入框 / 滑块 / 下拉框等控件时快捷键自动失效；快捷键与按钮复用同一套控制函数，行为完全一致。</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ======================= 教学简化说明 ======================= -->
+  <footer class="card foot">
+    <h3>⚠ 教学简化说明（以下均为「此处为简化演示」）</h3>
+    <ul>
+      <li>Tracker 采用 HTTP announce；未涉及 UDP Tracker、DHT、PEX 与加密握手（PE/MSE）。</li>
+      <li>一个 piece 用一次 request/piece 传输；真实协议中 piece 由多个 16 KiB 的 block 请求组成。</li>
+      <li>TCP 三次握手（SYN / SYN-ACK / ACK）被压缩为一次“连接建立”事件。</li>
+      <li>时序参数（约 10s 的 unchoke 周期、约 30s 的乐观解除阻塞周期、announce interval）已压缩。</li>
+      <li>文件固定为 8 × 256 KiB 分片，拓扑固定为全连接；真实场景由分片大小参数与发现机制决定。</li>
+      <li>peer_id、IP、SHA-1 等均为演示用的示例值，仅用于展示字段结构。</li>
+    </ul>
+    <p class="fine">单文件原生 HTML / CSS / JS · 无外部依赖 · 修改脚本中 STEPS 数组即可更换实验流程</p>
+  </footer>
+</div>
+
+<script>
+'use strict';
+/* ================================================================
+   BitTorrent 文件分发 · 可交互动画演示
+   · 实验流程由 STEPS 数组驱动：每步包含 title / desc / dur / events
+   · 事件为纯数据（用 E.* 工厂函数创建），数据包可用 onArrive 表达因果链
+   · 标注「此处为简化演示」的地方均为教学简化
+================================================================ */
+
+/* ---------------- 常量与场景配置 ---------------- */
+var SVGNS    = 'http://www.w3.org/2000/svg';
+var PIECES   = 8;      // 分片数（简化演示）
+var PIECE_KB = 256;    // 每片大小（简化演示）
+var HASH     = '9C4B2F17D83A6E05B19F72C4A0E58D6A17B3A1F2'; // info_hash 示例值
+var PEER_IDS = ['S','A','B','C'];
+var PAIRS6   = [['S','A'],['S','B'],['S','C'],['A','B'],['A','C'],['B','C']];
+var INIT_OWNED = { S:[0,1,2,3,4,5,6,7], A:[3], B:[], C:[3,6] };
+var PIECE_HASH = ['1F3A92C4','8B21D7E0','5C66A1B9','E40F38D2','72CB55F1','0A9E67C3','B814FE2A','6D50C9E7'];
+var BF_LABEL = { S:'BITFIELD 11111111', A:'BITFIELD 00010000', C:'BITFIELD 00010010' };
+var STATE_TXT = { idle:'待机', wait:'等待中', busy:'忙碌', download:'下载中', upload:'上传中', complete:'已完成' };
+var KIND_NAME = { tracker:'Tracker 协议', connect:'TCP', handshake:'握手', control:'控制消息', choke:'choke', data:'数据块' };
+
+var NODES = {
+  TR:{ name:'Tracker', kind:'tracker', x:540, y:128, w:212, h:76 },
+  S :{ name:'S', kind:'peer', x:168, y:332, w:178, h:126, ip:'10.0.1.10', port:6881, peerId:'-BT0001-5E3FA2B19C04' },
+  A :{ name:'A', kind:'peer', x:906, y:282, w:178, h:126, ip:'10.0.1.21', port:6882, peerId:'-BT0001-9C77D04177AE' },
+  B :{ name:'B', kind:'peer', x:900, y:560, w:178, h:126, ip:'10.0.1.32', port:6883, peerId:'-BT0001-1AB6E9C34D58' },
+  C :{ name:'C', kind:'peer', x:430, y:596, w:178, h:126, ip:'10.0.1.44', port:6884, peerId:'-BT0001-F42C88770BE1' }
+};
+var NODE_ELS = {}, LINK_ELS = {}, PAIR_SIGN = {}, RAR_ELS = [];
+
+/* ---------------- 协议字段信息（信息面板数据源） ---------------- */
+var INFO = {
+  announce: function (p) {
+    var n = NODES[p];
+    var own = INIT_OWNED[p].length;
+    var left = PIECES - own;
+    return {
+      rows: [
+        ['协议', 'HTTP GET /announce（简化）'],
+        ['info_hash', HASH],
+        ['peer_id', n.peerId],
+        ['ip : port', n.ip + ':' + n.port],
+        ['uploaded', '0 B'],
+        ['downloaded', (own * PIECE_KB) + ' KiB'],
+        ['left', left === 0 ? '0（完整文件）' : (left * PIECE_KB) + ' KiB（' + left + ' 片）'],
+        ['event', 'started'],
+        ['compact', '1']
+      ],
+      note: '此处为简化演示：未实现 UDP Tracker 与 DHT。Tracker 只返回 peer 地址列表，不传输文件数据。'
+    };
+  },
+  announceDone: function (p) {
+    return {
+      rows: [
+        ['协议', 'HTTP GET /announce（简化）'],
+        ['info_hash', HASH],
+        ['peer_id', NODES[p].peerId],
+        ['uploaded', '> 0（演示值）'],
+        ['downloaded', '2048 KiB（完整文件）'],
+        ['left', '0'],
+        ['event', 'completed']
+      ],
+      note: '下载完成时上报 event=completed；Seeder 还会周期性 announce 以维持登记。'
+    };
+  },
+  peerList: function () {
+    return {
+      rows: [
+        ['interval', '1800 s（简化固定值）'],
+        ['peers', '4 × (IP:port)'],
+        ['compact', '1 → 每地址 6 字节（4B IP + 2B 端口）']
+      ],
+      note: 'compact 格式把地址列表压缩为二进制串，减少 announce 响应体积。'
+    };
+  },
+  connect: function () {
+    return {
+      rows: [
+        ['传输层', 'TCP'],
+        ['过程', 'SYN → SYN-ACK → ACK']
+      ],
+      note: '此处为简化演示：三次握手被压缩为一次“连接建立”事件。'
+    };
+  },
+  handshake: function (from) {
+    return {
+      rows: [
+        ['总长', '68 字节'],
+        ['pstrlen', '19'],
+        ['pstr', 'BitTorrent protocol'],
+        ['reserved', '8 字节特性位（扩展协议 / DHT 等）'],
+        ['info_hash', HASH],
+        ['peer_id', NODES[from].peerId]
+      ],
+      note: '握手是连接上的第一条消息，双方都要发送；info_hash 不一致 → 立即断开。'
+    };
+  },
+  bitfield: function (from) {
+    return {
+      rows: [
+        ['消息 id', '5'],
+        ['bitfield', BF_LABEL[from].replace('BITFIELD ', '')],
+        ['含义', '第 i 位 = 1 → 拥有 piece i']
+      ],
+      note: '没有任何分片的节点可以省略 bitfield（合法行为，不是错误）。'
+    };
+  },
+  interested: function () {
+    return { rows: [['消息 id','2'],['载荷','无'],['语义','“我想下载你拥有的分片”']], note: '' };
+  },
+  choke: function () {
+    return { rows: [['消息 id','0'],['载荷','无'],['语义','暂停向对方发送数据（默认状态）']], note: '' };
+  },
+  unchoke: function () {
+    return { rows: [['消息 id','1'],['载荷','无'],['语义','允许对方发送 request']], note: '' };
+  },
+  request: function (i) {
+    return {
+      rows: [
+        ['消息 id', '6'],
+        ['index', String(i)],
+        ['begin', '0'],
+        ['length', '16384（16 KiB）']
+      ],
+      note: '此处为简化演示：真实协议中一个 piece 由多个 16 KiB block 的 request 组成。'
+    };
+  },
+  piece: function (i) {
+    return {
+      rows: [
+        ['消息 id', '7'],
+        ['index', String(i)],
+        ['begin', '0'],
+        ['block', '≤ 16 KiB（简化）'],
+        ['校验', '收齐后对整个 piece 做 SHA-1']
+      ],
+      note: '该 piece 的 SHA-1：' + PIECE_HASH[i] + '…（示例值）'
+    };
+  },
+  have: function (i) {
+    return { rows: [['消息 id','4'],['piece index', String(i)],['语义','“我刚完成并校验了这个 piece”']], note: '' };
+  }
+};
+
+/* ---------------- 事件工厂 ---------------- */
+var E = {
+  log: function (at, text) { return { at: at, type: 'log', text: text }; },
+  state: function (at, node, state) { return { at: at, type: 'state', node: node, state: state }; },
+  role: function (at, node, role) { return { at: at, type: 'role', node: node, role: role }; },
+  piece: function (at, node, index) { return { at: at, type: 'piece', node: node, index: index }; },
+  link: function (at, a, b) { return { at: at, type: 'link', a: a, b: b }; },
+  announce: function (at, node) { return { at: at, type: 'announce', node: node }; },
+  packet: function (at, from, to, label, kind, dur, info, onArrive) {
+    return { at: at, type: 'packet', from: from, to: to, label: label, kind: kind, dur: dur, info: info, onArrive: onArrive || [] };
+  }
+};
+
+/* ---------------- 常用事件组合 ---------------- */
+function announceOf(at, p) {
+  return E.packet(at, p, 'TR', 'ANNOUNCE', 'tracker', 1.2, INFO.announce(p), [
+    { type: 'announce', node: p },
+    { type: 'log', text: 'Tracker 登记 ' + p + '（event=started，info_hash 校验通过）' },
+    E.packet(0, 'TR', p, 'PEER LIST', 'tracker', 1.1, INFO.peerList(), [
+      { type: 'log', text: p + ' 收到 peer 列表：4 个 IP:port 地址' }
+    ])
+  ]);
+}
+/* 【此处为简化演示】TCP 三次握手压缩为一次连接 */
+function connectOf(at, a, b) {
+  return E.packet(at, a, b, 'TCP 连接', 'connect', 0.9, INFO.connect(), [
+    { type: 'link', a: a, b: b },
+    { type: 'log', text: a + ' ↔ ' + b + ' TCP 连接建立（三次握手，简化）' }
+  ]);
+}
+function handshakeOf(at, a, b) {
+  return E.packet(at, a, b, 'HANDSHAKE', 'handshake', 0.85, INFO.handshake(a), [
+    E.packet(0, b, a, 'HANDSHAKE 应答', 'handshake', 0.85, INFO.handshake(b), [])
+  ]);
+}
+function handshakesAll() {
+  return PAIRS6.map(function (pr, i) { return handshakeOf(0.4 + i * 0.55, pr[0], pr[1]); });
+}
+function bitfieldOf(at, from, to) { return E.packet(at, from, to, BF_LABEL[from], 'control', 1.0, INFO.bitfield(from), []); }
+function interestedOf(at, a, b) { return E.packet(at, a, b, 'INTERESTED', 'control', 1.0, INFO.interested(), []); }
+function unchokeOf(at, a, b) { return E.packet(at, a, b, 'UNCHOKE', 'control', 0.95, INFO.unchoke(), []); }
+function chokeOf(at, a, b) { return E.packet(at, a, b, 'CHOKE', 'choke', 0.95, INFO.choke(), []); }
+function haveBlast(from, idx) {
+  var out = [];
+  PEER_IDS.forEach(function (p, i) {
+    if (p !== from) out.push(E.packet(i * 0.15, from, p, 'HAVE P' + idx, 'control', 1.15, INFO.have(idx), []));
+  });
+  return out;
+}
+/* 一次完整的「请求 → 传输 → 校验 → 广播」因果链 */
+function transfer(at, from, to, idx, opts) {
+  opts = opts || {};
+  var onPieceArrive = [
+    { type: 'piece', node: from, index: idx },
+    { type: 'state', node: from, state: opts.fromState || 'download' },
+    { type: 'log', text: from + ' 收到 P' + idx + '（来自 ' + to + '），SHA-1 校验通过' }
+  ];
+  if (!opts.noHave) onPieceArrive = onPieceArrive.concat(haveBlast(from, idx));
+  return E.packet(at, from, to, 'REQUEST P' + idx, 'data', 1.05, INFO.request(idx), [
+    { type: 'state', node: to, state: opts.toState || 'upload' },
+    { type: 'log', text: to + ' 响应 ' + from + ' 的 REQUEST，开始发送 P' + idx },
+    E.packet(0, to, from, 'PIECE P' + idx, 'data', 1.5, INFO.piece(idx), onPieceArrive)
+  ]);
+}
+
+/* ================================================================
+   STEPS：实验流程定义（修改此数组即可更换实验流程）
+================================================================ */
+var STEPS = [
+{ title:'实验场景：一个 8 分片的文件', dur:8,
+  desc:'目标文件 <b>demo.bin</b> 被切分为 <b>8 个 piece（分片）</b>。<b>.torrent</b> 元文件记录 <b>info_hash</b>、piece 长度与每片的 SHA-1 哈希。<br>节点 <b>S</b> 是 <b>Seeder</b>（持有完整文件）；<b>A / B / C</b> 是 <b>Leecher</b>：A 已有 P3，C 已有 P3、P6，B 一无所有。顶部“分片热度条”显示每个 piece 在 swarm 中的副本数。',
+  events:[
+    E.log(0.3,'实验开始：文件被划分为 8 个 piece（分片）'),
+    E.role(0.6,'S','seeder'), E.state(0.6,'S','upload'),
+    E.log(1.2,'.torrent 记录了 info_hash、piece 长度与逐片 SHA-1 哈希'),
+    E.state(1.8,'A','idle'), E.state(2.2,'B','idle'), E.state(2.6,'C','idle'),
+    E.log(3.2,'Seeder S 拥有全部分片；Leecher A / C 只有部分分片，B 从零开始'),
+    E.log(4.6,'观察分片热度条：P3 有 3 份、P6 有 2 份，其余只在 S 手里'),
+    E.state(5.6,'A','wait'), E.state(5.8,'B','wait'), E.state(6.0,'C','wait'),
+    E.log(6.6,'各节点即将向 Tracker 注册（announce）…')
+  ]},
+{ title:'第 1 步：向 Tracker 注册（announce）', dur:9,
+  desc:'每个节点启动后向 <b>Tracker</b> 发送 <b>announce</b>：携带 <b>info_hash</b>、peer_id、端口、上传/下载/剩余字节数与 event（started）。Tracker 回复 <b>peer 列表</b>。<br>⚠ 关键概念：<b>Tracker 只做“登记与介绍”，从不传输文件数据</b>。本演示使用 HTTP announce（UDP Tracker / DHT / PEX 不涉及，简化）。',
+  events:[
+    E.state(0.2,'TR','busy'),
+    announceOf(0.4,'A'), announceOf(0.9,'B'), announceOf(1.4,'C'), announceOf(1.9,'S'),
+    E.log(3.4,'Tracker 记录每个 peer 的 IP:port，并把它们互相介绍给对方'),
+    E.state(5.6,'TR','idle'),
+    E.log(6.2,'四个节点都拿到了 peer 列表（各含 4 个地址）'),
+    E.log(7.4,'接下来 peer 之间将直接建立 TCP 连接')
+  ]},
+{ title:'第 2 步：建立 TCP 连接', dur:7,
+  desc:'Peer 按列表两两建立 <b>TCP 连接</b>（三次握手）。为画面清晰，SYN / SYN-ACK / ACK 被压缩为一次“连接”事件（<b>此处为简化演示</b>）。<br>演示拓扑为全连接；真实客户端的连接数受发现机制与上限参数约束。',
+  events:[
+    E.log(0.2,'开始两两建立 TCP 连接（SYN → SYN-ACK → ACK，简化为一步）'),
+    connectOf(0.4,'S','A'), connectOf(0.9,'S','B'), connectOf(1.4,'S','C'),
+    connectOf(1.9,'A','B'), connectOf(2.4,'A','C'), connectOf(2.9,'B','C'),
+    E.log(4.6,'全连接拓扑就绪：6 条 peer 链路'),
+    E.state(4.7,'A','wait'), E.state(4.8,'B','wait'), E.state(4.9,'C','wait')
+  ]},
+{ title:'第 3 步：BitTorrent 握手', dur:7.5,
+  desc:'每条连接上双方交换 <b>68 字节握手消息</b>：<b>pstr</b>（协议名）+ <b>reserved</b>（8 字节特性位）+ <b>info_hash</b> + <b>peer_id</b>。<br><b>info_hash 不一致的连接会被立即断开</b>——这就是“确认大家在下载同一个文件”的机制。点击任一握手包查看字段。',
+  events:[
+    E.log(0.2,'每条连接都要双向握手（点击数据包可查看 68 字节结构）')
+  ].concat(handshakesAll(), [
+    E.log(5.9,'握手完成：双方确认 info_hash 一致，连接可用'),
+    E.log(6.6,'下一步：交换 bitfield，告诉对方自己持有哪些分片')
+  ])},
+{ title:'第 4 步：交换 bitfield', dur:8.5,
+  desc:'握手后，节点立刻发送 <b>bitfield</b>（消息 id=5）：每一位对应一个 piece，<b>1=拥有，0=缺失</b>。S 发送 11111111，A 发送 00010000，C 发送 00010010。<br><b>B 没有任何分片，按协议可以不发送 bitfield</b>——这是合法行为，不是错误。',
+  events:[
+    E.log(0.2,'Seeder S 广播自己的 bitfield：11111111'),
+    bitfieldOf(0.4,'S','A'), bitfieldOf(0.8,'S','B'), bitfieldOf(1.2,'S','C'),
+    E.log(1.7,'A 发送 00010000：只有 P3'),
+    bitfieldOf(1.9,'A','S'), bitfieldOf(2.3,'A','B'), bitfieldOf(2.7,'A','C'),
+    E.log(3.2,'C 发送 00010010：有 P3 和 P6'),
+    bitfieldOf(3.4,'C','S'), bitfieldOf(3.8,'C','A'), bitfieldOf(4.2,'C','B'),
+    E.log(5.0,'B 没有任何分片，按协议省略 bitfield（合法行为）'),
+    E.log(6.4,'现在每个节点都知道邻居手上有哪些分片了')
+  ]},
+{ title:'第 5 步：最稀缺优先（rarest first）+ interested', dur:9,
+  desc:'每个节点统计“<b>我缺的分片在邻居各有几份</b>”，优先请求副本最少的分片——让稀缺分片尽快在 swarm 中扩散，这是 BitTorrent 效率的核心。副本数并列时随机挑选。<br>当前 P3×3、P6×2、其余×1：<b>没人会先去要 P3</b>。节点用 <b>interested</b>（id=2）告知对方“我想从你这里下载”。',
+  events:[
+    E.log(0.3,'统计副本数：P3×3、P6×2、其余×1 —— 稀缺分片优先'),
+    E.state(0.6,'A','busy'), E.state(0.8,'B','busy'), E.state(1.0,'C','busy'),
+    E.log(1.8,'A 缺 7 个分片，随机挑中只有 1 份的 P0 → 向 S 发送 interested'),
+    interestedOf(1.8,'A','S'),
+    E.log(2.5,'C 随机挑中 P2 → 向 S 发送 interested'),
+    interestedOf(2.5,'C','S'),
+    E.log(3.2,'B 什么都没有，随机从 P4 开始'),
+    interestedOf(3.2,'B','S'), interestedOf(3.9,'B','A'), interestedOf(4.2,'B','C'),
+    E.log(4.6,'B 向所有“手上有自己缺的分片”的邻居发送 interested'),
+    E.log(6.2,'注意：A 也需要 P6，但 P6 已有 2 份副本，优先级靠后'),
+    E.log(7.6,'表达兴趣 ≠ 能下载：还要等对方 unchoke')
+  ]},
+{ title:'第 6 步：choke / unchoke 与 tit-for-tat', dur:9.5,
+  desc:'默认情况下 peer 互相 <b>choke（阻塞）</b>，收到 <b>unchoke</b> 才能传输。节点倾向 unchoke <b>给自己上传最快的邻居</b>（tit-for-tat，一报还一报），并定期随机 <b>optimistic unchoke（乐观解除阻塞）</b>，给新邻居展示带宽的机会。<br>真实周期约 10s / 30s，此处时间已压缩（<b>简化演示</b>）。',
+  events:[
+    E.log(0.3,'默认状态：所有人互相 choke，数据还不流动'),
+    unchokeOf(0.8,'S','A'), unchokeOf(1.1,'S','B'), unchokeOf(1.4,'S','C'),
+    E.log(1.6,'Seeder S 解除阻塞：它只上传，乐意服务所有邻居（简化）'),
+    unchokeOf(2.1,'A','S'), unchokeOf(2.5,'C','S'),
+    E.log(2.7,'A、C 也解除对 S 的阻塞：S 是最稳定的数据源'),
+    chokeOf(3.5,'A','B'),
+    E.log(3.6,'A 阻塞 B：B 没有任何数据可交换（tit-for-tat 的体现）'),
+    E.log(5.2,'Optimistic unchoke：定期随机挑一个新邻居试一试…'),
+    unchokeOf(5.9,'A','B'),
+    E.log(6.0,'A 对 B 乐观解除阻塞——B 终于有机会下载了'),
+    E.log(8.2,'传输通道打通，下一站：真正的数据！')
+  ]},
+{ title:'第 7 步：第一次数据传输（request / piece）', dur:11,
+  desc:'被 unchoke 后，节点用 <b>request</b>（id=6）索要数据，对方用 <b>piece</b>（id=7）回传。真实协议中一个 piece 会拆成多个 <b>16 KiB block</b> 逐个请求；此处<b>一个 piece 用一次请求表示（简化演示）</b>。<br>收到完整 piece 后：① 做 <b>SHA-1 校验</b>；② 向所有邻居广播 <b>have</b>（id=4）。注意观察热度条与节点格子的变化。',
+  events:[
+    E.log(0.3,'A 发出 REQUEST(index=0, begin=0, length=16384)'),
+    transfer(0.4,'A','S',0),
+    transfer(1.6,'C','S',2),
+    transfer(2.8,'B','S',4),
+    E.log(6.6,'HAVE 广播让新分片的位置迅速传遍整个 swarm'),
+    E.log(8.4,'现在 A 有 P0、C 有 P2、B 有 P4 —— 它们彼此也变成了“供货商”')
+  ]},
+{ title:'第 8 步：Leecher 互相传输 —— 扩展性的来源', dur:11,
+  desc:'关键一步：<b>数据不再只来自 Seeder</b>。B 从 A 那里拿到 P0（A 刚下载完成），C 从 B 那里拿 P4，A 从 C 那里拿 P6。<br>每个 Leecher 在下载的同时也在上传：<b>谁给我上传多，我就 unchoke 谁</b>。于是 swarm 的总带宽随节点数增长，而不是被 Seeder 的出口带宽卡死。',
+  events:[
+    E.log(0.3,'B 从 have 消息中得知 A 有 P0 → 直接向 A 请求'),
+    transfer(0.6,'B','A',0),
+    transfer(2.2,'C','B',4),
+    transfer(3.8,'A','C',6),
+    E.log(6.8,'注意状态灯：绿色=下载中，蓝色=上传中，两种角色同时发生'),
+    E.log(8.0,'tit-for-tat：B 正在给 C 上传，C 之后也更愿意给 B 上传（机制简化表述）'),
+    E.log(9.6,'S 的负担被分摊了 —— 这就是“人越多越快”的原因')
+  ]},
+{ title:'第 9 步：B 下载完成，升级为 Seeder', dur:11,
+  desc:'B 进入冲刺：并行向 S、A、C 请求剩余分片。集齐 8 片并全部通过 <b>SHA-1 校验</b>后，B 的角色变为 <b>Seeder</b>，并向 Tracker 上报 <b>event=completed</b>（left=0）。<br>为保持画面清晰，本步骤的 HAVE 广播合并为一条日志（<b>简化演示</b>）。',
+  events:[
+    E.log(0.3,'B 的剩余分片：P1 P2 P3 P5 P6 P7，并行请求'),
+    transfer(0.6,'B','S',1,{noHave:true}),
+    transfer(1.3,'B','C',2,{noHave:true}),
+    transfer(2.0,'B','A',3,{noHave:true}),
+    transfer(2.7,'B','S',5,{noHave:true}),
+    transfer(3.4,'B','C',6,{noHave:true}),
+    transfer(4.1,'B','S',7,{noHave:true}),
+    E.log(6.8,'（HAVE 广播已合并显示 —— 简化演示）'),
+    E.log(7.4,'B 集齐 8 个分片，逐片 SHA-1 校验全部通过'),
+    E.role(8.0,'B','seeder'), E.state(8.0,'B','complete'),
+    E.log(8.2,'B 升级为 Seeder！'),
+    E.packet(8.6,'B','TR','ANNOUNCE completed','tracker',1.2,INFO.announceDone('B'),[
+      { type:'announce', node:'B' },
+      { type:'log', text:'B 向 Tracker 上报 event=completed（left=0）' }
+    ])
+  ]},
+{ title:'第 10 步：全员完成，swarm 收敛', dur:12.5,
+  desc:'A 和 C 也陆续集齐分片（HAVE 广播合并显示）。每个节点完成时都会向 Tracker 上报 completed。<br><b>实验小结：</b>① Tracker 只介绍、不传数据；② <b>rarest first</b> 让稀缺分片快速扩散；③ <b>tit-for-tat + 乐观解除阻塞</b> 维持上传激励；④ <b>have 广播</b>让分片位置实时同步；⑤ 每个下载者同时也是上传者，总吞吐随规模增长。<br>点击任意节点 / 数据包可回顾细节；按 <b>R</b> 或 <b>空格</b> 重新开始。',
+  events:[
+    E.log(0.3,'A 的剩余：P1 P2 P4 P5 P7；C 的剩余：P0 P1 P5 P7'),
+    transfer(0.6,'A','B',1,{noHave:true,toState:'complete'}),
+    transfer(1.2,'A','C',2,{noHave:true}),
+    transfer(1.8,'A','B',4,{noHave:true,toState:'complete'}),
+    transfer(2.4,'A','S',5,{noHave:true}),
+    transfer(3.0,'A','B',7,{noHave:true,toState:'complete'}),
+    transfer(3.8,'C','B',0,{noHave:true,toState:'complete'}),
+    transfer(4.4,'C','A',1,{noHave:true}),
+    transfer(5.0,'C','S',5,{noHave:true}),
+    transfer(5.6,'C','B',7,{noHave:true,toState:'complete'}),
+    E.log(7.0,'（HAVE 广播已合并显示 —— 简化演示）'),
+    E.role(7.4,'A','seeder'), E.state(7.4,'A','complete'),
+    E.log(7.5,'A 完成下载，升级为 Seeder'),
+    E.packet(7.8,'A','TR','ANNOUNCE completed','tracker',1.2,INFO.announceDone('A'),[
+      { type:'announce', node:'A' }
+    ]),
+    E.role(9.2,'C','seeder'), E.state(9.2,'C','complete'),
+    E.log(9.3,'C 完成下载，升级为 Seeder'),
+    E.packet(9.6,'C','TR','ANNOUNCE completed','tracker',1.2,INFO.announceDone('C'),[
+      { type:'announce', node:'C' }
+    ]),
+    E.log(11.0,'全员 Seeder：swarm 进度 100%，文件分发完成')
+  ]}
+];
+STEPS.forEach(function (s) { s.events.sort(function (a, b) { return (a.at || 0) - (b.at || 0); }); });
+
+/* ---------------- 运行时状态 ---------------- */
+var sim = {
+  playing:false, speed:1, finished:false, isResetting:false, stopAtEnd:false,
+  stepIndex:0, stepTime:0, evPtr:0,
+  packets:[], announceCount:0, registered:{}, registeredN:0,
+  conn:{ S:{}, A:{}, B:{}, C:{} },
+  peers:{}, info:{ kind:null, id:null }
+};
+PEER_IDS.forEach(function (id) { sim.peers[id] = { owned:{}, ownedN:0, role:'leecher', state:'idle' }; });
+sim.peers.TR = { state:'idle' };
+
+/* ---------------- DOM 缓存 ---------------- */
+var els = {};
+function cacheDom() {
+  var ids = ['stage','layerLinks','layerRarity','layerNodes','layerFx','layerPackets','banner',
+    'swarmFill','swarmPct','demoFill','demoPct','stSeed','stLeech','stAnn','stOnline','evtLine',
+    'btnPlay','btnStep','btnReset','btnTheme','speedRange','speedVal',
+    'stepNum','stepTitle','stepDesc','stepDots','infoBody'];
+  ids.forEach(function (id) { els[id] = document.getElementById(id); });
+}
+
+/* ---------------- SVG 工具 ---------------- */
+function svgEl(tag, attrs, parent) {
+  var el = document.createElementNS(SVGNS, tag);
+  attrs = attrs || {};
+  for (var k in attrs) el.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(el);
+  return el;
+}
+function edgePoint(n, tx, ty) {
+  var dx = tx - n.x, dy = ty - n.y;
+  var sx = (n.w / 2 + 8) / (Math.abs(dx) || 1e-6);
+  var sy = (n.h / 2 + 8) / (Math.abs(dy) || 1e-6);
+  var s = Math.min(sx, sy);
+  return { x: n.x + dx * s, y: n.y + dy * s };
+}
+function qpoint(p0, c, p1, t) {
+  var u = 1 - t;
+  return { x: u*u*p0.x + 2*u*t*c.x + t*t*p1.x, y: u*u*p0.y + 2*u*t*c.y + t*t*p1.y };
+}
+
+/* ---------------- 舞台构建 ---------------- */
+function buildLinks() {
+  var all = [['TR','S'],['TR','A'],['TR','B'],['TR','C']].concat(PAIRS6);
+  all.forEach(function (pr, i) {
+    var a = pr[0], b = pr[1];
+    var key = [a, b].sort().join('');
+    var line = svgEl('line', {
+      x1: NODES[a].x, y1: NODES[a].y, x2: NODES[b].x, y2: NODES[b].y,
+      'class': (a === 'TR' || b === 'TR') ? 'link link-tracker' : 'link'
+    }, els.layerLinks);
+    LINK_ELS[key] = line;
+    PAIR_SIGN[key] = (i % 2 ? -1 : 1);
+  });
+}
+function buildRarity() {
+  var barW = 64, gap = 14, x0 = (1080 - (8 * barW + 7 * gap)) / 2;
+  svgEl('text', { x:16, y:34, 'class':'rside' }, els.layerRarity).textContent = '分片热度';
+  svgEl('text', { x:16, y:50, 'class':'rside' }, els.layerRarity).textContent = '（副本数）';
+  svgEl('text', { x:852, y:34, 'class':'rside' }, els.layerRarity).textContent = '■ 副本数';
+  svgEl('text', { x:852, y:50, 'class':'rside' }, els.layerRarity).textContent = '■ 橙=稀缺';
+  for (var i = 0; i < PIECES; i++) {
+    (function (idx) {
+      var g = svgEl('g', { 'class':'rarc', transform:'translate(' + (x0 + idx * (barW + gap)) + ',0)' }, els.layerRarity);
+      svgEl('rect', { x:0, y:14, width:barW, height:42, rx:4, 'class':'rtrack' }, g);
+      var bar = svgEl('rect', { x:0, y:14, width:barW, height:42, rx:4, 'class':'rbar' }, g);
+      var cnt = svgEl('text', { x:barW/2, y:10, 'text-anchor':'middle', 'class':'rcount' }, g);
+      svgEl('text', { x:barW/2, y:70, 'text-anchor':'middle', 'class':'rlabel' }, g).textContent = 'P' + idx;
+      g.addEventListener('click', function (e) { e.stopPropagation(); showPieceInfo(idx); });
+      RAR_ELS.push({ g:g, bar:bar, cnt:cnt });
+    })(i);
+  }
+}
+function buildNodes() {
+  Object.keys(NODES).forEach(function (id) {
+    var n = NODES[id];
+    var g = svgEl('g', { 'class':'node', id:'node-' + id, transform:'translate(' + n.x + ',' + n.y + ')' }, els.layerNodes);
+    g.addEventListener('click', function (e) { e.stopPropagation(); showNodeInfo(id); });
+    svgEl('rect', { x:-n.w/2, y:-n.h/2, width:n.w, height:n.h, rx:10, 'class':'card-rect' }, g);
+    var dot = svgEl('circle', { cx:n.w/2-16, cy:-n.h/2+18, r:5, 'class':'dot st-idle' }, g);
+    svgEl('text', { x:-n.w/2+13, y:-n.h/2+24, 'class':'n-name' }, g).textContent = n.name;
+    var role = svgEl('text', { x:-n.w/2+13, y:-n.h/2+40, 'class':'n-role' }, g);
+    if (id === 'TR') {
+      role.textContent = 'HTTP announce（简化）';
+      var cnt = svgEl('text', { x:-n.w/2+13, y:-n.h/2+58, 'class':'n-role' }, g);
+      NODE_ELS[id] = { g:g, dot:dot, role:role, cnt:cnt };
+    } else {
+      var cells = [];
+      var cw = 34, ch = 17, gp = 5;
+      var gx0 = -n.w/2 + 13.5, gy0 = -n.h/2 + 50;
+      for (var i = 0; i < PIECES; i++) {
+        cells.push(svgEl('rect', {
+          x: gx0 + (i % 4) * (cw + gp), y: gy0 + Math.floor(i / 4) * (ch + gp),
+          width: cw, height: ch, rx: 3, 'class': 'cell'
+        }, g));
+      }
+      var pct = svgEl('text', { x:-n.w/2+13, y:n.h/2-11, 'class':'n-pct' }, g);
+      var st  = svgEl('text', { x:n.w/2-13, y:n.h/2-11, 'text-anchor':'end', 'class':'n-state' }, g);
+      NODE_ELS[id] = { g:g, dot:dot, role:role, cells:cells, pct:pct, st:st };
+    }
+  });
+}
+
+/* ---------------- 视图刷新 ---------------- */
+function renderPeerCard(id) {
+  var P = sim.peers[id], el = NODE_ELS[id];
+  el.cells.forEach(function (c, i) {
+    var on = !!P.owned[i];
+    c.classList.toggle('on', on);
+    if (!on) c.classList.remove('new');
+  });
+  el.pct.textContent = Math.round(P.ownedN / PIECES * 100) + '%';
+  el.role.textContent = (P.role === 'seeder' ? 'Seeder' : 'Leecher') + ' · ' + NODES[id].ip;
+  el.st.textContent = STATE_TXT[P.state] || P.state;
+  el.dot.setAttribute('class', 'dot st-' + P.state);
+  el.g.classList.toggle('is-complete', P.state === 'complete');
+}
+function renderTrackerCard() {
+  NODE_ELS.TR.cnt.textContent = 'announces ' + sim.announceCount + ' · 在线 ' + sim.registeredN;
+  NODE_ELS.TR.dot.setAttribute('class', 'dot st-' + sim.peers.TR.state);
+}
+function setNodeState(id, st) {
+  if (id === 'TR') { sim.peers.TR.state = st; renderTrackerCard(); return; }
+  sim.peers[id].state = st;
+  renderPeerCard(id);
+  refreshInfoIf('node', id);
+}
+function setRole(id, role) {
+  sim.peers[id].role = role;
+  renderPeerCard(id);
+  updateSwarm();
+  refreshInfoIf('node', id);
+}
+function addPiece(id, idx) {
+  var P = sim.peers[id];
+  if (P.owned[idx]) return;
+  P.owned[idx] = true;
+  P.ownedN++;
+  var cell = NODE_ELS[id].cells[idx];
+  cell.classList.add('on', 'new');
+  setTimeout(function () { cell.classList.remove('new'); }, 900);
+  NODE_ELS[id].pct.textContent = Math.round(P.ownedN / PIECES * 100) + '%';
+  updateRarity(); updateSwarm();
+  refreshInfoIf('node', id); refreshInfoIf('piece', idx);
+}
+function linkUp(a, b) {
+  var key = [a, b].sort().join('');
+  var el = LINK_ELS[key];
+  if (el) {
+    el.classList.add('up', 'justup');
+    setTimeout(function () { el.classList.remove('justup'); }, 900);
+  }
+  sim.conn[a][b] = true; sim.conn[b][a] = true;
+  refreshInfoIf('node', a); refreshInfoIf('node', b);
+}
+function connCount(id) { return Object.keys(sim.conn[id]).length; }
+function updateRarity() {
+  for (var i = 0; i < PIECES; i++) {
+    var c = 0;
+    PEER_IDS.forEach(function (id) { if (sim.peers[id].owned[i]) c++; });
+    var r = RAR_ELS[i];
+    r.bar.style.transform = 'scaleY(' + Math.max(c / PEER_IDS.length, 0.09) + ')';
+    r.bar.classList.toggle('rare', c <= 1);
+    r.cnt.textContent = c;
+  }
+}
+/* SWARM 分片完成度：仅当 piece 归属变化时更新（自第 7 步起才会变化） */
+function updateSwarm() {
+  var owned = 0, seed = 0;
+  PEER_IDS.forEach(function (id) {
+    owned += sim.peers[id].ownedN;
+    if (sim.peers[id].role === 'seeder') seed++;
+  });
+  var pct = owned / (PEER_IDS.length * PIECES) * 100;
+  els.swarmFill.style.width = pct + '%';
+  els.swarmPct.textContent = pct.toFixed(1) + '%';
+  els.stSeed.textContent = seed;
+  els.stLeech.textContent = PEER_IDS.length - seed;
+  els.stAnn.textContent = sim.announceCount;
+  els.stOnline.textContent = sim.registeredN;
+  renderTrackerCard();
+}
+/* 演示进度：随播放实时连续更新（步骤 + 步内时间） */
+function updateDemoProgress() {
+  var total = STEPS.length;
+  var overall;
+  if (sim.finished) overall = 1;
+  else {
+    var idx = Math.min(sim.stepIndex, total - 1);
+    var frac = Math.min(sim.stepTime / STEPS[idx].dur, 1);
+    overall = (idx + frac) / total;
+  }
+  els.demoFill.style.width = (overall * 100).toFixed(1) + '%';
+  els.demoPct.textContent = Math.round(overall * 100) + '%';
+}
+function flashRing(id) {
+  var n = NODES[id];
+  var c = svgEl('circle', { cx:n.x, cy:n.y, r:30, 'class':'ring' }, els.layerFx);
+  setTimeout(function () { c.remove(); }, 620);
+}
+function setLastEvent(text) {
+  els.evtLine.textContent = text;
+  els.evtLine.classList.remove('tick');
+  void els.evtLine.offsetWidth;
+  els.evtLine.classList.add('tick');
+}
+
+/* ---------------- 数据包生成与运动 ---------------- */
+function spawnPacket(ev) {
+  var A = NODES[ev.from], B = NODES[ev.to];
+  var p0 = edgePoint(A, B.x, B.y), p1 = edgePoint(B, A.x, A.y);
+  var key = [ev.from, ev.to].sort().join('');
+  var sign = PAIR_SIGN[key] || 1;
+  var dx = p1.x - p0.x, dy = p1.y - p0.y, len = Math.hypot(dx, dy) || 1;
+  var c = { x:(p0.x + p1.x)/2 - (dy/len)*26*sign, y:(p0.y + p1.y)/2 + (dx/len)*26*sign };
+  var w = Math.round(ev.label.length * 7.4) + 20, h = 20;
+  var g = svgEl('g', { 'class':'pkt pkt-' + ev.kind });
+  svgEl('rect', { x:-(w/2+5), y:-16, width:w+10, height:32, 'class':'hit' }, g);
+  svgEl('rect', { x:-w/2, y:-h/2, width:w, height:h, rx:6, 'class':'pill' }, g);
+  svgEl('text', { x:0, y:0, 'text-anchor':'middle', 'dominant-baseline':'central' }, g).textContent = ev.label;
+  g.addEventListener('click', function (e) { e.stopPropagation(); showPacketInfo(ev); });
+  els.layerPackets.appendChild(g);
+  var pkt = { el:g, ev:ev, p0:p0, c:c, p1:p1, t:0 };
+  positionPacket(pkt);
+  sim.packets.push(pkt);
+}
+function positionPacket(p) {
+  var pt = qpoint(p.p0, p.c, p.p1, Math.min(p.t, 1));
+  p.el.setAttribute('transform', 'translate(' + pt.x + ',' + pt.y + ')');
+}
+function arrivePacket(p) {
+  p.el.remove();
+  flashRing(p.ev.to);
+  (p.ev.onArrive || []).forEach(fireEvent);
+}
+
+/* ---------------- 事件引擎 ---------------- */
+function fireEvent(ev) {
+  switch (ev.type) {
+    case 'packet': spawnPacket(ev); break;
+    case 'log': setLastEvent(ev.text); break;
+    case 'state': setNodeState(ev.node, ev.state); break;
+    case 'role': setRole(ev.node, ev.role); break;
+    case 'piece': addPiece(ev.node, ev.index); break;
+    case 'link': linkUp(ev.a, ev.b); break;
+    case 'announce':
+      sim.announceCount++;
+      if (!sim.registered[ev.node]) { sim.registered[ev.node] = true; sim.registeredN++; }
+      updateSwarm();
+      refreshInfoIf('node', ev.node);
+      break;
+  }
+}
+/* 跳转用的瞬时回放：跳过数据包动画，直接应用状态效果 */
+function applyInstant(ev) {
+  if (ev.type === 'packet') (ev.onArrive || []).forEach(applyInstant);
+  else fireEvent(ev);
+}
+function tick(dt) {
+  if (sim.finished || sim.stepIndex >= STEPS.length) return;
+  sim.stepTime += dt;
+  var step = STEPS[sim.stepIndex];
+  while (sim.evPtr < step.events.length && (step.events[sim.evPtr].at || 0) <= sim.stepTime) {
+    fireEvent(step.events[sim.evPtr]);
+    sim.evPtr++;
+  }
+  for (var i = sim.packets.length - 1; i >= 0; i--) {
+    var p = sim.packets[i];
+    p.t += dt / p.ev.dur;
+    if (p.t >= 1) { arrivePacket(p); sim.packets.splice(i, 1); }
+    else positionPacket(p);
+  }
+  if (sim.stepTime >= step.dur) {
+    sim.stepIndex++; sim.stepTime = 0; sim.evPtr = 0;
+    if (sim.stepIndex >= STEPS.length) { finishSim(); return; }
+    updateStepUI();
+    if (sim.stopAtEnd) {
+      sim.stopAtEnd = false;
+      sim.playing = false;
+      updatePlayBtn();
+      setLastEvent('STEP ' + sim.stepIndex + ' 已执行完毕，暂停在步骤边界');
+    }
+  }
+  updateDemoProgress();
+}
+var lastTs = null;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (lastTs === null) { lastTs = ts; return; }
+  var raw = Math.min((ts - lastTs) / 1000, 0.08);
+  lastTs = ts;
+  if (sim.playing && !document.hidden) tick(raw * sim.speed);
+}
+
+/* ---------------- 控制函数（按钮与快捷键共用） ---------------- */
+function play() { sim.playing = true; sim.stopAtEnd = false; updatePlayBtn(); }
+function pause() { sim.playing = false; updatePlayBtn(); }
+function togglePlay() {
+  if (sim.isResetting) return;
+  if (sim.finished) { resetSim(); play(); return; }
+  if (sim.playing) pause(); else play();
+}
+function stepOnce() {
+  if (sim.isResetting) return;
+  if (sim.finished) resetSim();
+  sim.stopAtEnd = true;
+  sim.playing = true;
+  updatePlayBtn();
+}
+function resetSim() {
+  sim.isResetting = true;
+  sim.playing = false; sim.finished = false; sim.stopAtEnd = false;
+  sim.stepIndex = 0; sim.stepTime = 0; sim.evPtr = 0;
+  sim.packets.length = 0;
+  els.layerPackets.innerHTML = '';
+  els.layerFx.innerHTML = '';
+  els.banner.classList.remove('show');
+  sim.announceCount = 0; sim.registered = {}; sim.registeredN = 0;
+  PEER_IDS.forEach(function (id) { sim.conn[id] = {}; });
+  Object.keys(LINK_ELS).forEach(function (k) {
+    var l = LINK_ELS[k];
+    if (!l.classList.contains('link-tracker')) l.classList.remove('up', 'justup');
+  });
+  PEER_IDS.forEach(function (id) {
+    var P = sim.peers[id];
+    P.owned = {}; P.ownedN = 0;
+    INIT_OWNED[id].forEach(function (i) { P.owned[i] = true; });
+    P.ownedN = INIT_OWNED[id].length;
+    P.role = (id === 'S') ? 'seeder' : 'leecher';
+    P.state = (id === 'S') ? 'upload' : 'idle';
+    renderPeerCard(id);
+  });
+  sim.peers.TR.state = 'idle';
+  updateRarity(); updateSwarm(); updateDemoProgress(); updateStepUI(); showDefaultInfo();
+  setLastEvent('就绪：按 ▶ 播放，或按 空格 / S 单步执行');
+  updatePlayBtn();
+  sim.isResetting = false;
+}
+function finishSim() {
+  sim.playing = false; sim.finished = true;
+  els.banner.classList.add('show');
+  updateDemoProgress();
+  setLastEvent('演示完成：4/4 Seeder，swarm 进度 100%');
+  updatePlayBtn();
+}
+function jumpToStep(i) {
+  if (sim.isResetting) return;
+  i = Math.max(0, Math.min(i, STEPS.length - 1));
+  resetSim();
+  for (var s = 0; s < i; s++) STEPS[s].events.forEach(applyInstant);
+  sim.stepIndex = i;
+  updateStepUI(); updateSwarm(); updateDemoProgress();
+  setLastEvent('已跳转到 STEP ' + (i + 1) + '（' + STEPS[i].title + '）—— 按 ▶ 或 空格 继续');
+}
+function setSpeed(v) {
+  sim.speed = v;
+  els.speedVal.textContent = (+v) + '×';
+}
+function updatePlayBtn() {
+  var b = els.btnPlay;
+  if (sim.playing) { b.innerHTML = ICOS.pause + '<span>暂停</span>'; b.setAttribute('aria-label', '暂停'); }
+  else if (sim.finished) { b.innerHTML = ICOS.play + '<span>重播</span>'; b.setAttribute('aria-label', '重新播放'); }
+  else { b.innerHTML = ICOS.play + '<span>播放</span>'; b.setAttribute('aria-label', '播放'); }
+}
+
+/* ---------------- 步骤说明区 ---------------- */
+function buildDots() {
+  STEPS.forEach(function (s, i) {
+    var d = document.createElement('button');
+    d.className = 'dot-btn';
+    d.title = 'STEP ' + (i + 1) + ' · ' + s.title;
+    d.setAttribute('aria-label', d.title);
+    d.addEventListener('click', function () { jumpToStep(i); });
+    els.stepDots.appendChild(d);
+  });
+}
+function updateStepUI() {
+  var i = Math.min(sim.stepIndex, STEPS.length - 1);
+  var s = STEPS[i];
+  els.stepNum.textContent = 'STEP ' + String(i + 1).padStart(2, '0') + ' / ' + STEPS.length;
+  els.stepTitle.textContent = s.title;
+  els.stepDesc.innerHTML = s.desc;
+  Array.prototype.forEach.call(els.stepDots.children, function (d, k) {
+    d.classList.toggle('done', k < i);
+    d.classList.toggle('cur', k === i);
+  });
+}
+
+/* ---------------- 信息面板 ---------------- */
+function showInfo(badge, badgeCls, title, rows, note) {
+  var html = '<div class="info-head">' + (badge ? '<span class="badge ' + badgeCls + '">' + badge + '</span>' : '') + '<h4>' + title + '</h4></div>';
+  html += '<table class="kv">' + rows.map(function (r) { return '<tr><th>' + r[0] + '</th><td>' + r[1] + '</td></tr>'; }).join('') + '</table>';
+  if (note) html += '<p class="note">' + note + '</p>';
+  els.infoBody.innerHTML = html;
+}
+function showDefaultInfo() {
+  sim.info = { kind:null, id:null };
+  showInfo(null, null, '点击查看详情', [
+    ['节点', '显示 peer_id、进度与持有分片'],
+    ['数据包', '显示协议字段（消息 id、载荷）'],
+    ['热度条', '显示该分片的副本数与持有者']
+  ], '演示播放过程中，信息面板会随状态实时更新。');
+}
+function showNodeInfo(id) {
+  sim.info = { kind:'node', id:id };
+  if (id === 'TR') {
+    showInfo('TRACKER', 'b-node', 'Tracker', [
+      ['职责', '登记 peer、下发 peer 列表'],
+      ['协议', 'HTTP announce（简化）'],
+      ['announces', String(sim.announceCount)],
+      ['在线节点', sim.registeredN + ' / 4']
+    ], '关键概念：Tracker 从不传输文件数据。未涉及 UDP Tracker / DHT / PEX（简化演示）。');
+    return;
+  }
+  var P = sim.peers[id], n = NODES[id];
+  var pieces = [];
+  for (var i = 0; i < PIECES; i++) if (P.owned[i]) pieces.push('P' + i);
+  showInfo(P.role === 'seeder' ? 'SEEDER' : 'LEECHER', 'b-node', '节点 ' + id, [
+    ['peer_id', n.peerId],
+    ['监听地址', n.ip + ':' + n.port],
+    ['分片进度', P.ownedN + ' / ' + PIECES + '（' + Math.round(P.ownedN / PIECES * 100) + '%）'],
+    ['持有分片', pieces.join(' ') || '（空）'],
+    ['当前状态', STATE_TXT[P.state] || P.state],
+    ['peer 连接', connCount(id) + ' / 3']
+  ], 'peer_id 为 20 字节标识，前缀 -BT0001- 为客户端影子标识（示例值）。');
+}
+function showPacketInfo(ev) {
+  sim.info = { kind:'packet', id:null };
+  showInfo(KIND_NAME[ev.kind] || ev.kind, 'b-' + ev.kind, ev.label, ev.info.rows, ev.info.note);
+}
+function showPieceInfo(i) {
+  sim.info = { kind:'piece', id:i };
+  var owners = PEER_IDS.filter(function (id) { return sim.peers[id].owned[i]; });
+  showInfo('PIECE', 'b-piece', '分片 P' + i, [
+    ['piece 长度', PIECE_KB + ' KiB（简化统一）'],
+    ['副本数', String(owners.length)],
+    ['持有者', owners.join(' ') || '（无）'],
+    ['SHA-1', PIECE_HASH[i] + '…（示例值）'],
+    ['稀缺度', owners.length <= 1 ? '★ 稀缺 —— rarest first 优先对象' : '较充足']
+  ], '下载完成的 piece 必须先通过 SHA-1 校验，才会被保留并对外广播 have。');
+}
+function refreshInfoIf(kind, id) {
+  if (sim.info.kind !== kind || sim.info.id !== id) return;
+  if (kind === 'node') showNodeInfo(id);
+  else if (kind === 'piece') showPieceInfo(id);
+}
+
+/* ---------------- 主题（独立函数） ---------------- */
+var THEME_KEY = 'bt-lab-theme';
+function currentTheme() { return document.documentElement.getAttribute('data-theme') || 'light'; }
+function applyTheme(mode, persist) {
+  document.documentElement.setAttribute('data-theme', mode);
+  if (persist) { try { localStorage.setItem(THEME_KEY, mode); } catch (e) {} }
+  var btn = els.btnTheme;
+  if (btn) {
+    btn.setAttribute('data-mode', mode);
+    btn.querySelector('.lbl').textContent = (mode === 'dark') ? '浅色' : '深色';
+    btn.setAttribute('aria-label', (mode === 'dark') ? '切换为浅色主题' : '切换为深色主题');
+  }
+}
+function toggleTheme() { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark', true); }
+function initTheme() {
+  var saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
+  var sys = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  applyTheme(saved || sys, false);
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+      var has = null;
+      try { has = localStorage.getItem(THEME_KEY); } catch (err) {}
+      if (!has) applyTheme(e.matches ? 'dark' : 'light', false);
+    });
+  }
+}
+
+/* ---------------- 快捷键（独立函数，与动画控制解耦） ---------------- */
+var SHORTCUTS = [
+  { label:'播放 / 暂停', match:function (k) { return k === ' '; },                    run:function () { togglePlay(); },  btn:function () { return els.btnPlay; } },
+  { label:'单步执行',    match:function (k) { return k === 's' || k === 'S' || k === 'ArrowRight'; }, run:function () { stepOnce(); }, btn:function () { return els.btnStep; } },
+  { label:'重置',        match:function (k) { return k === 'r' || k === 'R'; },       run:function () { resetSim(); },    btn:function () { return els.btnReset; } },
+  { label:'切换主题',    match:function (k) { return k === 't' || k === 'T'; },       run:function () { toggleTheme(); }, btn:function () { return els.btnTheme; } }
+];
+function isEditable(el) {
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+}
+function flashBtn(btn) {
+  if (!btn) return;
+  btn.classList.add('kbd-flash');
+  setTimeout(function () { btn.classList.remove('kbd-flash'); }, 380);
+}
+function bindShortcuts() {
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isEditable(e.target)) return;                 // 输入控件聚焦时失效
+    if (document.hidden || sim.isResetting) return;   // 后台 / 重置中不响应
+    var sc = null;
+    for (var i = 0; i < SHORTCUTS.length; i++) if (SHORTCUTS[i].match(e.key)) { sc = SHORTCUTS[i]; break; }
+    if (e.key === ' ' || e.key.indexOf('Arrow') === 0) e.preventDefault(); // 防滚动
+    if (!sc || e.repeat) return;
+    sc.run();
+    flashBtn(sc.btn());
+  });
+}
+
+/* ---------------- 控件绑定 ---------------- */
+var ICOS = {
+  play : '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M4 2.2v11.6L13.4 8z" fill="currentColor"/></svg>',
+  pause: '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M4.4 2.5h2.7v11H4.4zM8.9 2.5h2.7v11H8.9z" fill="currentColor"/></svg>',
+  step : '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M3 2.5v11l7.2-5.5z" fill="currentColor"/><rect x="11.6" y="2.5" width="2" height="11" fill="currentColor"/></svg>',
+  reset: '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M8 2.6a5.4 5.4 0 1 1-5.1 3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M1.8 1.6v4.4h4.4z" fill="currentColor"/></svg>'
+};
+function bindAction(btn, fn) {
+  btn.addEventListener('click', function () { fn(); btn.blur(); });
+}
+function bindControls() {
+  els.btnStep.innerHTML  = ICOS.step  + '<span>单步</span>';
+  els.btnReset.innerHTML = ICOS.reset + '<span>重置</span>';
+  bindAction(els.btnPlay,  togglePlay);
+  bindAction(els.btnStep,  stepOnce);
+  bindAction(els.btnReset, resetSim);
+  bindAction(els.btnTheme, toggleTheme);
+  els.speedRange.addEventListener('input', function (e) { setSpeed(parseFloat(e.target.value)); });
+  els.stage.addEventListener('click', showDefaultInfo);
+}
+
+/* ---------------- 初始化（带错误保护，便于课堂排障） ---------------- */
+function init() {
+  cacheDom();
+  initTheme();
+  buildLinks();
+  buildRarity();
+  buildNodes();
+  buildDots();
+  bindControls();
+  bindShortcuts();
+  setSpeed(1);
+  resetSim();
+  requestAnimationFrame(loop);
+}
+function boot() {
+  try {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  } catch (err) {
+    console.error(err);
+    var el = document.getElementById('evtLine');
+    if (el) { el.classList.add('err'); el.textContent = '初始化失败：' + err.message + '（请打开控制台查看详情）'; }
+  }
+}
+boot();
+</script>
+</body>
+</html>
