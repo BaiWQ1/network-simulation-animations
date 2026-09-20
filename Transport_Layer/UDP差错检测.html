@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UDP 校验和计算与校验 · 交互动画实验</title>
+
+<!-- 主题预加载：优先 localStorage，其次跟随系统 prefers-color-scheme -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("udp-checksum-demo-theme");
+    if (!t) {
+      t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+        ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
+
+<style>
+/* ==========================================================================
+   1. 主题变量：全部颜色集中于此，组件内禁止硬编码颜色
+   ========================================================================== */
+:root {
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+          "Cascadia Mono", "Liberation Mono", monospace;
+}
+
+:root, :root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef1f7;
+  --bg-panel: #ffffff;
+  --bg-inset: #f1f4fa;
+  --text: #1b2434;
+  --text-dim: #57637a;
+  --border: #d7deea;
+  --accent: #2563eb;
+  --accent-soft: #dce8ff;
+  --ok: #177a3d;        --ok-soft: #def7e6;
+  --warn: #a16207;      --warn-soft: #fdf1cf;
+  --err: #b42323;       --err-soft: #fde3e3;
+  --info: #1d5bd6;      --info-soft: #dfe9ff;
+  --purple: #6d3fd6;    --purple-soft: #ece4ff;
+  --lamp-idle: #93a0b4; --lamp-wait: #d97706; --lamp-busy: #2563eb;
+  --lamp-send: #189a4a; --lamp-ok: #189a4a;   --lamp-err: #d92d20;
+  --link-base: #c6cfdd; --link-active: #189a4a; --link-err: #d92d20;
+  --packet-bg: #1d5bd6; --packet-fg: #ffffff;
+  --packet-ok: #177a3d; --packet-err: #b42323;
+  --btn-primary-bg: #2563eb; --btn-primary-fg: #ffffff;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 6px 20px rgba(16,24,40,.07);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0f1e;
+  --bg-panel: #121a2e;
+  --bg-inset: #0d1526;
+  --text: #e8edf6;
+  --text-dim: #9aa7bd;
+  --border: #28344f;
+  --accent: #7db1ff;
+  --accent-soft: #17335c;
+  --ok: #53d98b;        --ok-soft: #0f2f1e;
+  --warn: #f5c04e;      --warn-soft: #33270b;
+  --err: #f47c7c;       --err-soft: #3a1416;
+  --info: #8ab6ff;      --info-soft: #14294d;
+  --purple: #bda4ff;    --purple-soft: #271d4d;
+  --lamp-idle: #5f6f88; --lamp-wait: #f5c04e; --lamp-busy: #6ea8ff;
+  --lamp-send: #53d98b; --lamp-ok: #53d98b;   --lamp-err: #f47c7c;
+  --link-base: #2c3a58; --link-active: #53d98b; --link-err: #f47c7c;
+  --packet-bg: #3d7de0; --packet-fg: #071022;
+  --packet-ok: #53d98b; --packet-err: #e35d5d;
+  --btn-primary-bg: #8fbcff; --btn-primary-fg: #0a1a33;
+  --shadow: 0 1px 2px rgba(0,0,0,.40), 0 8px 24px rgba(0,0,0,.35);
+}
+
+/* ==========================================================================
+   2. 基础布局
+   ========================================================================== */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  background:
+    radial-gradient(1100px 460px at 82% -10%, var(--accent-soft), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+:where(body, .panel, .btn, .board, .board > header, .board-body, .brow,
+       .node, .packet, .link, .dot, .kv th, .kv td, .kbd, .legend-item,
+       .step-panel, .bresult, .board-note, .bexpr, .bcarry, .sc-row,
+       .page-head, .foot, .pkt-label, .pkt-sum, .node-sub, .node-status,
+       .link-tag, .stage-tag) {
+  transition: background-color .3s ease, color .3s ease,
+              border-color .3s ease, box-shadow .3s ease;
+}
+
+.page { max-width: 1240px; margin: 0 auto; padding: 18px 20px 44px; }
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+
+.panel-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 14px; margin-bottom: 10px;
+}
+.panel-head .tag { font-size: 11px; font-weight: 600; color: var(--text-dim); }
+
+code, .mono {
+  font-family: var(--mono); font-size: .95em;
+  background: var(--bg-inset); border-radius: 4px; padding: 0 4px;
+}
+
+#error-banner {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 99;
+  background: var(--err-soft); color: var(--err);
+  border: 1px solid var(--err); border-radius: 10px;
+  padding: 10px 18px; font-size: 13px; box-shadow: var(--shadow); max-width: 90%;
+}
+
+/* ==========================================================================
+   3. 页头
+   ========================================================================== */
+.page-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; margin-bottom: 14px;
+}
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.page-head h1 { margin: 0; font-size: 21px; letter-spacing: .3px; }
+.subtitle { margin: 6px 0 0; color: var(--text-dim); font-size: 13px; max-width: 780px; }
+.badge {
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid var(--accent);
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+}
+
+/* ==========================================================================
+   4. 按钮与控制面板
+   ========================================================================== */
+.btn {
+  appearance: none; border: 1px solid var(--border);
+  background: var(--bg-panel); color: var(--text);
+  padding: 8px 14px; border-radius: 10px;
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+  box-shadow: var(--shadow); user-select: none;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn-primary {
+  background: var(--btn-primary-bg); border-color: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+}
+.btn-primary:hover:not(:disabled) { color: var(--btn-primary-fg); filter: brightness(1.08); }
+
+@keyframes kbflash {
+  0%   { box-shadow: 0 0 0 0 var(--accent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+.kb-flash { animation: kbflash .5s ease-out; }
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.btn-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+.step-btn { min-width: 108px; }
+
+.speed-box { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.speed-box label { font-size: 12.5px; color: var(--text-dim); font-weight: 600; }
+.speed-box input[type="range"] { width: 150px; accent-color: var(--accent); }
+#speed-val { font-family: var(--mono); font-size: 12.5px; min-width: 48px; text-align: right; }
+
+/* ==========================================================================
+   5. 主布局
+   ========================================================================== */
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; }
+.main-col { display: grid; gap: 14px; min-width: 0; }
+.side-col { display: grid; gap: 14px; align-content: start; }
+@media (max-width: 1020px) { .layout { grid-template-columns: 1fr; } }
+
+/* ==========================================================================
+   6. 实验场景区
+   ========================================================================== */
+.stage-wrap { padding: 10px; overflow-x: auto; }
+.stage { position: relative; height: 232px; min-width: 620px; }
+
+.node {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 196px; z-index: 1;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px 14px;
+  box-shadow: var(--shadow); cursor: pointer; user-select: none;
+}
+#node-sender   { left: 8px; }
+#node-receiver { right: 8px; }
+.node:hover { border-color: var(--accent); }
+.node-icon { font-size: 28px; line-height: 1; }
+.node-name { font-weight: 700; margin-top: 5px; font-size: 14px; }
+.node-sub  { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+.node-status {
+  margin-top: 9px; font-size: 12px; display: flex; align-items: center; gap: 7px;
+  color: var(--text-dim);
+}
+.lamp { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--lamp-idle); }
+
+.node[data-status="idle"] .lamp  { background: var(--lamp-idle); }
+.node[data-status="wait"] .lamp  { background: var(--lamp-wait); }
+.node[data-status="busy"] .lamp  { background: var(--lamp-busy); }
+.node[data-status="send"] .lamp  { background: var(--lamp-send); }
+.node[data-status="done"] .lamp  { background: var(--lamp-ok); opacity: .75; }
+.node[data-status="ok"] .lamp    { background: var(--lamp-ok); }
+.node[data-status="err"] .lamp   { background: var(--lamp-err); }
+.node[data-status="ok"] .node-status   { color: var(--ok); font-weight: 600; }
+.node[data-status="err"] .node-status  { color: var(--err); font-weight: 600; }
+.node[data-status="send"] .node-status { color: var(--ok); }
+
+.link {
+  position: absolute; left: 20%; right: 20%; top: 50%; height: 6px;
+  margin-top: -3px; border-radius: 3px; background: var(--link-base); z-index: 0;
+}
+.link.active {
+  background: repeating-linear-gradient(90deg,
+    var(--link-active) 0 12px, transparent 12px 24px);
+  animation: linkflow 1s linear infinite;
+}
+.link.corrupted {
+  background: repeating-linear-gradient(90deg,
+    var(--link-err) 0 12px, transparent 12px 24px);
+  animation: linkflow .6s linear infinite;
+}
+@keyframes linkflow { to { background-position: 24px 0; } }
+
+.link-tag {
+  position: absolute; left: 50%; top: calc(50% + 14px); transform: translateX(-50%);
+  font-size: 11px; color: var(--text-dim); white-space: nowrap;
+}
+.stage-tag {
+  position: absolute; right: 10px; bottom: 6px;
+  font-size: 11px; color: var(--text-dim);
+}
+
+.packet {
+  position: absolute; top: calc(50% - 80px); transform: translateX(-50%); z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--packet-bg); color: var(--packet-fg);
+  border: 1px solid var(--packet-bg); border-radius: 10px;
+  padding: 7px 13px; font-size: 12px; white-space: nowrap;
+  box-shadow: var(--shadow); cursor: pointer; user-select: none;
+}
+.packet.hidden { opacity: 0; pointer-events: none; }
+.packet.moving {
+  transition: left var(--pkt-dur, 1200ms) cubic-bezier(.5,.05,.35,1),
+              opacity .3s ease, background-color .3s ease, border-color .3s ease;
+}
+.pkt-label { font-weight: 700; }
+.pkt-sum   { font-family: var(--mono); font-size: 11px; opacity: .94; }
+.packet.summed   { box-shadow: 0 0 0 3px var(--purple-soft), var(--shadow); }
+.packet.delivered{ background: var(--packet-ok); border-color: var(--packet-ok); }
+.packet.corrupted{ background: var(--packet-err); border-color: var(--packet-err); }
+
+@keyframes resetpulse { 0% { opacity: .45; } 100% { opacity: 1; } }
+.stage.flash-reset { animation: resetpulse .45s ease-out; }
+
+/* ==========================================================================
+   7. 步骤说明区
+   ========================================================================== */
+.step-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.step-progress-text { font-family: var(--mono); font-size: 12.5px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.progress-track { flex: 1; min-width: 140px; height: 6px; border-radius: 3px; background: var(--bg-inset); border: 1px solid var(--border); overflow: hidden; }
+.progress-fill  { height: 100%; width: 0; background: var(--accent); transition: width .35s ease; }
+.progress-dots  { display: flex; gap: 4px; flex-wrap: wrap; }
+.dot {
+  width: 15px; height: 9px; border-radius: 5px; padding: 0; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-inset);
+}
+.dot.reached { background: var(--accent-soft); border-color: var(--accent); }
+.dot.current { background: var(--accent); border-color: var(--accent); }
+.dot:disabled { cursor: default; opacity: .55; }
+#step-title { margin: 12px 0 6px; font-size: 16.5px; }
+#step-desc  { margin: 0; color: var(--text-dim); font-size: 13.5px; }
+
+/* ==========================================================================
+   8. 计算面板（竖式加法）
+   ========================================================================== */
+.boards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+@media (max-width: 900px) { .boards { grid-template-columns: 1fr; } }
+
+.board { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+.board.dim { opacity: .72; }
+.board > header {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 10px 14px; font-weight: 700; font-size: 13.5px;
+  border-bottom: 1px solid var(--border); background: var(--bg-inset);
+}
+.board > header .tag { font-size: 10.5px; font-weight: 600; color: var(--text-dim); font-family: var(--mono); }
+.board-body { padding: 10px 12px 12px; min-height: 260px; font-size: 12.5px; }
+.board-empty { color: var(--text-dim); padding: 26px 8px; text-align: center; }
+
+/* 竖式行：每行 = 一个 16 位字 */
+.brow { display: flex; align-items: center; gap: 7px; padding: 3px 8px; border-radius: 7px; cursor: pointer; }
+.brow:hover { background: var(--bg-inset); }
+.bmark { width: 15px; flex: none; text-align: center; font-size: 10.5px; color: var(--text-dim); }
+.blabel { flex: 1; }
+.bhex   { font-family: var(--mono); color: var(--info); }
+
+.brow.st-todo { opacity: .52; }
+.brow.st-todo .bmark::before { content: "·"; }
+.brow.st-done .bmark::before { content: "✓"; color: var(--ok); }
+.brow.st-cur  { background: var(--purple-soft); outline: 1px solid var(--purple); }
+.brow.st-cur .bmark::before { content: "▶"; color: var(--purple); }
+.brow.st-cur .bhex { color: var(--purple); font-weight: 700; }
+.brow.st-bad  { background: var(--err-soft); outline: 1px solid var(--err); }
+.brow.st-bad .bmark::before { content: "⚠"; color: var(--err); }
+.brow.st-bad .bhex { color: var(--err); font-weight: 700; }
+.brow.key .bhex { color: var(--purple); font-weight: 700; }
+
+/* 当前算式 / 进位回卷 / 累加和 / 结果 */
+.bexpr {
+  margin-top: 8px; padding: 6px 9px; border-radius: 7px;
+  background: var(--bg-inset); border: 1px dashed var(--border);
+  font-family: var(--mono); font-size: 11.8px; color: var(--text-dim);
+}
+.bcarry {
+  margin-top: 6px; padding: 5px 9px; border-radius: 7px;
+  background: var(--warn-soft); border: 1px solid var(--warn);
+  color: var(--warn); font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+}
+.brow.sum {
+  margin-top: 7px; padding-top: 9px; border-top: 1px dashed var(--border);
+  font-weight: 700; cursor: default; font-size: 13px;
+}
+.brow.sum .bmark::before { content: "Σ"; color: var(--accent); font-weight: 700; }
+.brow.sum .bhex { color: var(--ok); font-size: 13.5px; }
+.bresult {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  font-weight: 700; font-family: var(--mono); font-size: 12.5px;
+}
+.bresult.good { background: var(--ok-soft);  color: var(--ok);  border: 1px solid var(--ok); }
+.bresult.bad  { background: var(--err-soft); color: var(--err); border: 1px solid var(--err); }
+.board-note { margin: 8px 2px 0; color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
+.board-hint { margin: 8px 2px 0; font-size: 11px; color: var(--text-dim); opacity: .85; }
+
+/* 前进时的轻量入场动画（回退不触发） */
+@keyframes popIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.anim { animation: popIn .3s ease-out; }
+
+/* ==========================================================================
+   9. 信息面板 / 图例 / 快捷键
+   ========================================================================== */
+.mini-btn {
+  font-size: 11.5px; border: 1px solid var(--border); background: var(--bg-inset);
+  color: var(--text); border-radius: 7px; padding: 3px 9px; cursor: pointer;
+}
+.mini-btn:hover { border-color: var(--accent); color: var(--accent); }
+.hidden { display: none !important; }
+
+#info-title { font-size: 13.5px; }
+.kv { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+.kv th {
+  text-align: left; color: var(--text-dim); font-weight: 600;
+  padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border);
+  white-space: nowrap; vertical-align: top;
+}
+.kv td { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.kv tr:last-child th, .kv tr:last-child td { border-bottom: none; }
+.kv td.good { color: var(--ok);  font-weight: 600; }
+.kv td.bad  { color: var(--err); font-weight: 600; }
+.kv td.hl   { color: var(--purple); font-weight: 600; }
+
+.calc { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 4px; }
+.calc-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 7px 10px; font-size: 12.3px; border-bottom: 1px solid var(--border);
+}
+.calc-row:last-child { border-bottom: none; }
+.calc-row:nth-child(odd) { background: var(--bg-inset); }
+.calc-val { font-family: var(--mono); text-align: right; }
+.calc-val i { font-style: normal; color: var(--text-dim); margin: 0 3px; }
+.calc-row.good .calc-val { color: var(--ok); font-weight: 700; }
+.calc-row.bad  .calc-val { color: var(--err); font-weight: 700; }
+.calc-row.warn .calc-val { color: var(--warn); font-weight: 700; }
+
+.note { color: var(--text-dim); font-size: 12.3px; line-height: 1.65; margin: 10px 0 0; }
+.sum-list { margin: 4px 0 0; padding-left: 18px; font-size: 12.8px; }
+.sum-list li { margin-bottom: 7px; }
+
+.legend-item { display: flex; align-items: center; gap: 9px; font-size: 12.5px; padding: 3.5px 0; }
+.swatch { width: 14px; height: 14px; border-radius: 4px; flex: none; border: 1px solid var(--border); }
+.swatch.round { border-radius: 50%; width: 11px; height: 11px; }
+.legend-group { font-size: 11px; font-weight: 700; color: var(--text-dim); margin: 9px 0 3px; letter-spacing: .5px; }
+.legend-group:first-child { margin-top: 0; }
+.sw-pkt { display: inline-block; border-radius: 5px; padding: 1px 7px; font-size: 10.5px; font-weight: 700; }
+.sw-link { width: 26px; height: 5px; border-radius: 3px; flex: none; }
+.sw-mark { width: 16px; text-align: center; font-size: 11px; flex: none; }
+
+.sc-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 12.5px; }
+.sc-row:last-child { border-bottom: none; }
+.sc-label { color: var(--text-dim); text-align: right; }
+.kbd {
+  font-family: var(--mono); font-size: 11px; background: var(--bg-inset);
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 7px; margin-right: 3px; white-space: nowrap;
+}
+
+/* ==========================================================================
+   10. 页脚
+   ========================================================================== */
+.foot { margin-top: 16px; font-size: 12px; color: var(--text-dim); }
+.foot h3 { font-size: 13px; color: var(--text); margin: 0 0 8px; }
+.foot ol { margin: 0; padding-left: 20px; }
+.foot li { margin-bottom: 5px; }
+</style>
+</head>
+
+<body>
+<div id="error-banner" class="hidden" role="alert"></div>
+
+<div class="page">
+
+  <header class="page-head">
+    <div>
+      <div class="title-row">
+        <h1>UDP 校验和计算与校验 · 交互动画实验</h1>
+        <span class="badge">RFC 768</span>
+      </div>
+      <p class="subtitle">
+        发送方逐字演示 16 位反码求和（含进位回卷）→ 取反码写入校验和字段；
+        接收方含校验和字段复检（附 1 位错误对比演示）。共 27 步，可单步/回退/跳转。
+      </p>
+    </div>
+    <button type="button" id="btn-theme" class="btn" title="快捷键：T">🌙 切换到深色</button>
+  </header>
+
+  <section class="panel controls" aria-label="控制面板">
+    <div class="btn-group">
+      <button type="button" id="btn-prev"  class="btn step-btn" title="快捷键：A 或 ←">◀ 上一步</button>
+      <button type="button" id="btn-step"  class="btn step-btn" title="快捷键：S 或 →">单步执行 ▶</button>
+      <span class="btn-sep" aria-hidden="true"></span>
+      <button type="button" id="btn-play"  class="btn btn-primary" title="快捷键：空格">▶ 播放</button>
+      <button type="button" id="btn-pause" class="btn" title="快捷键：空格">⏸ 暂停</button>
+      <button type="button" id="btn-reset" class="btn" title="快捷键：R">↺ 重置</button>
+    </div>
+    <div class="speed-box">
+      <label for="speed">速度</label>
+      <input type="range" id="speed" min="0.5" max="3" step="0.25" value="1">
+      <span id="speed-val">1.00×</span>
+    </div>
+  </section>
+
+  <div class="layout">
+    <main class="main-col">
+
+      <section class="panel stage-wrap" aria-label="实验场景">
+        <div class="stage" id="stage">
+          <div class="link" id="link" aria-hidden="true">
+            <span class="link-tag">直连链路（简化演示：省略路由器与 IP 封装细节）</span>
+          </div>
+
+          <div class="node" id="node-sender" role="button" tabindex="0"
+               aria-label="主机 A，点击查看详情" title="点击查看详情">
+            <div class="node-icon">🖥️</div>
+            <div class="node-name">主机 A（发送方）</div>
+            <div class="node-sub">192.168.1.10 : 0x1234</div>
+            <div class="node-status"><span class="lamp"></span><span class="node-note">空闲</span></div>
+          </div>
+
+          <div class="node" id="node-receiver" role="button" tabindex="0"
+               aria-label="主机 B，点击查看详情" title="点击查看详情">
+            <div class="node-icon">🗄️</div>
+            <div class="node-name">主机 B（接收方）</div>
+            <div class="node-sub">192.168.1.20 : 0x0050</div>
+            <div class="node-status"><span class="lamp"></span><span class="node-note">空闲</span></div>
+          </div>
+
+          <div class="packet hidden" id="packet" role="button" tabindex="0"
+               aria-label="UDP 数据报，点击查看详情" title="点击查看数据包字段">
+            <span class="pkt-label"></span>
+            <span class="pkt-sum"></span>
+          </div>
+
+          <span class="stage-tag">拓扑为示意图</span>
+        </div>
+      </section>
+
+      <section class="panel step-panel" aria-label="当前步骤说明" aria-live="polite">
+        <div class="step-head">
+          <span class="step-progress-text" id="progress-text">第 1 / 27 步</span>
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-dots" id="progress-dots" aria-label="步骤跳转（可回退至任意已完成步骤）"></div>
+        </div>
+        <h2 id="step-title"></h2>
+        <p id="step-desc"></p>
+      </section>
+
+      <div class="boards">
+        <section class="board" id="board-sender" aria-label="发送方校验和计算">
+          <header>发送方 · 竖式反码求和 <span class="tag board-tag">已加 0/14 字</span></header>
+          <div class="board-body"></div>
+        </section>
+        <section class="board" id="board-receiver" aria-label="接收方校验">
+          <header>接收方 · 校验竖式 <span class="tag board-tag">已加 0/14 字</span></header>
+          <div class="board-body"></div>
+        </section>
+      </div>
+      <p class="board-hint">提示：竖式中 ✓=已加、▶=正在加、·=待加；点击任意一行可查看该 16 位字的含义。</p>
+    </main>
+
+    <aside class="side-col">
+      <section class="panel" aria-label="信息面板">
+        <div class="panel-head">
+          <span id="info-title">信息面板</span>
+          <button type="button" id="info-back" class="mini-btn hidden">↩ 返回本步说明</button>
+        </div>
+        <div id="info-body" aria-live="polite"></div>
+      </section>
+
+      <section class="panel" aria-label="图例">
+        <div class="panel-head">图例 <span class="tag">两种主题语义一致</span></div>
+        <div class="legend-group">节点状态灯</div>
+        <div class="legend-item"><span class="swatch round" style="background:var(--lamp-idle)"></span>空闲</div>
+        <div class="legend-item"><span class="swatch round" style="background:var(--lamp-wait)"></span>等待（如等待接收）</div>
+        <div class="legend-item"><span class="swatch round" style="background:var(--lamp-busy)"></span>计算 / 构建中</div>
+        <div class="legend-item"><span class="swatch round" style="background:var(--lamp-send)"></span>发送中 / 校验通过</div>
+        <div class="legend-item"><span class="swatch round" style="background:var(--lamp-err)"></span>错误 / 校验失败</div>
+        <div class="legend-group">竖式行状态</div>
+        <div class="legend-item"><span class="sw-mark" style="color:var(--ok)">✓</span>已累加</div>
+        <div class="legend-item"><span class="sw-mark" style="color:var(--purple)">▶</span>正在累加（当前字）</div>
+        <div class="legend-item"><span class="sw-mark">·</span>待累加（已列出）</div>
+        <div class="legend-item"><span class="sw-mark" style="color:var(--err)">⚠</span>错误字段</div>
+        <div class="legend-group">数据包</div>
+        <div class="legend-item"><span class="sw-pkt" style="background:var(--packet-bg);color:var(--packet-fg)">UDP</span>正常传输</div>
+        <div class="legend-item"><span class="sw-pkt" style="background:var(--packet-ok);color:var(--packet-fg)">UDP ✓</span>已交付上层</div>
+        <div class="legend-item"><span class="sw-pkt" style="background:var(--packet-err);color:var(--packet-fg)">UDP ⚠</span>传输中损坏</div>
+        <div class="legend-group">链路</div>
+        <div class="legend-item"><span class="sw-link" style="background:var(--link-base)"></span>空闲</div>
+        <div class="legend-item"><span class="sw-link" style="background:repeating-linear-gradient(90deg,var(--link-active) 0 6px,transparent 6px 12px)"></span>传输中</div>
+        <div class="legend-item"><span class="sw-link" style="background:repeating-linear-gradient(90deg,var(--link-err) 0 6px,transparent 6px 12px)"></span>出错</div>
+      </section>
+
+      <section class="panel" aria-label="快捷键">
+        <div class="panel-head">快捷键 <span class="tag">输入框聚焦时自动失效</span></div>
+        <div id="shortcut-list"></div>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="foot panel">
+    <h3>教学正确性与简化说明</h3>
+    <ol>
+      <li><strong>逐字运算：</strong>发送方 14 个 16 位字逐字累加（每字一步），进位回卷实时标出；所有中间值由脚本按反码加法规则计算生成，可手工复核。</li>
+      <li><strong>链路简化：</strong>页面以“直连链路”表示传输路径，省略 IP 层封装、路由与 ARP 等细节（此处为简化演示）。</li>
+      <li><strong>0x0000 的语义：</strong>在 IPv4 中，UDP 校验和字段为 <code>0x0000</code> 表示“发送方未计算校验和”。本例计算结果为 <code>0x6507</code>，不涉及该歧义；计算过程中“暂置 0”仅是占位。</li>
+      <li><strong>对比演示：</strong>“1 位错误”为假想场景（此处为简化演示）；真实传输中的比特错误是随机的。UDP 只检错、不纠错、无重传。</li>
+      <li><strong>填充规则：</strong>若数据为奇数字节，需补 0 凑齐 16 位字参与计算（补的 0 不发送，RFC 768）。本例数据为 8 字节，无需填充。</li>
+      <li><strong>检错能力（教材常用结论）：</strong>可检出所有单比特与奇数位错误、所有长度小于 16 位的突发错误；随机错误漏检概率约 2⁻¹⁶ 量级。IPv6 中 UDP 校验和必须启用（RFC 8200）。</li>
+    </ol>
+  </footer>
+</div>
+
+<script>
+window.addEventListener("error", function (e) {
+  var b = document.getElementById("error-banner");
+  if (b) {
+    b.textContent = "脚本错误：" + (e.message || "未知错误");
+    b.classList.remove("hidden");
+  }
+});
+</script>
+
+<script>
+"use strict";
+/* ============================================================================
+ * UDP 校验和计算 · 可交互动画演示（运算过程可视化版，共 27 步）
+ * ----------------------------------------------------------------------------
+ * 1. 发送方 14 个 16 位字逐字累加，每字一步；竖式行状态：待加 → 正在加 → 已加。
+ * 2. 所有中间和由 addFold() 依反码加法规则计算（进位回卷），保证数值自洽。
+ * 3. goToStep(index,{animate}) 为唯一跳转入口；回退/跳转一律直接落位（幂等重绘）。
+ * 4. 快捷键与按钮复用同一套控制函数。
+ * ==========================================================================*/
+
+/* ==========================================================================
+ * 一、协议数据与运算引擎
+ * ==========================================================================*/
+var SCENARIO = {
+  srcIp: "192.168.1.10", dstIp: "192.168.1.20",
+  dataAscii: "HELLO!!!", dataHex: "48 45 4C 4C 4F 21 21 21",
+  checksum: "0x6507"
+};
+
+var WORDS = {
+  pseudo: [
+    { label: "源 IP（高 16 位）",  hex: "C0A8", note: "192.168" },
+    { label: "源 IP（低 16 位）",  hex: "010A", note: ".1.10" },
+    { label: "目的 IP（高 16 位）", hex: "C0A8", note: "192.168" },
+    { label: "目的 IP（低 16 位）", hex: "0114", note: ".1.20" },
+    { label: "全 0 + 协议号",      hex: "0011", note: "IP 协议号 17 = UDP" },
+    { label: "UDP 长度",           hex: "0010", note: "16 字节（首部 8 + 数据 8）" }
+  ],
+  hdrSender: [
+    { label: "源端口",   hex: "1234", note: "十进制 4660" },
+    { label: "目的端口", hex: "0050", note: "十进制 80" },
+    { label: "UDP 长度", hex: "0010", note: "16 字节" },
+    { label: "校验和",   hex: "0000", note: "计算时暂置 0，算完后回填" }
+  ],
+  hdrReceiver: [
+    { label: "源端口",   hex: "1234", note: "十进制 4660" },
+    { label: "目的端口", hex: "0050", note: "十进制 80" },
+    { label: "UDP 长度", hex: "0010", note: "16 字节" },
+    { label: "校验和",   hex: "6507", note: "收到的校验和字段，参与累加（不置 0）" }
+  ],
+  data: [
+    { label: "数据第 1-2 字节 “HE”", hex: "4845" },
+    { label: "数据第 3-4 字节 “LL”", hex: "4C4C" },
+    { label: "数据第 5-6 字节 “O!”", hex: "4F21" },
+    { label: "数据第 7-8 字节 “!!”", hex: "2121" }
+  ],
+  /* 对比演示：0x4F21 最低位翻转 → 0x4F20（此处为简化演示） */
+  dataCorrupt: [
+    { label: "数据第 1-2 字节 “HE”", hex: "4845" },
+    { label: "数据第 3-4 字节 “LL”", hex: "4C4C" },
+    { label: "数据第 5-6 字节 “O ”", hex: "4F20", note: "⚠ 传输中最低位翻转：0x21 → 0x20" },
+    { label: "数据第 7-8 字节 “!!”", hex: "2121" }
+  ]
+};
+
+/* ---- 数值工具 ---- */
+function hex16(n) { return "0x" + n.toString(16).toUpperCase().padStart(4, "0"); }
+function rawHex(raw) {           /* 超过 16 位时显示为 0x1 XXXX */
+  return raw > 0xFFFF ? "0x1 " + (raw & 0xFFFF).toString(16).toUpperCase().padStart(4, "0")
+                      : hex16(raw);
+}
+/* 反码加法：16 位累加，进位回卷加到最低位 */
+function addFold(sum, w) {
+  var raw = sum + w;
+  return { raw: raw, carry: raw > 0xFFFF, after: (raw & 0xFFFF) + (raw >>> 16) };
+}
+
+/* ---- 发送方：14 字累加序列与前缀和（由代码计算，保证自洽） ---- */
+var FLAT = [].concat(
+  WORDS.pseudo.map(function (w) { return { w: w, group: "伪首部" }; }),
+  WORDS.hdrSender.map(function (w) { return { w: w, group: "UDP 首部" }; }),
+  WORDS.data.map(function (w) { return { w: w, group: "数据" }; })
+);
+var PREFIX = [];                 /* PREFIX[k] = 加完第 k 字后的 {before, raw, carry, after} */
+(function () {
+  var s = 0;
+  FLAT.forEach(function (item) {
+    var val = parseInt(item.w.hex, 16);
+    var r = addFold(s, val);
+    PREFIX.push({ before: s, raw: r.raw, carry: r.carry, after: r.after });
+    s = r.after;
+  });
+  if (s !== 0x9AF8) console.warn("[自检] 发送方累加和异常：" + hex16(s));
+  if ((0xFFFF - s) !== 0x6507) console.warn("[自检] 校验和异常");
+})();
+
+/* ---- 接收方：14 字（含校验和字段 0x6507）前缀和 ---- */
+var RECV_FLAT = [].concat(
+  WORDS.pseudo.map(function (w) { return { w: w, group: "伪首部" }; }),
+  WORDS.hdrReceiver.map(function (w) { return { w: w, group: "UDP 首部" }; }),
+  WORDS.data.map(function (w) { return { w: w, group: "数据" }; })
+);
+var RPREFIX = [];
+(function () {
+  var s = 0;
+  RECV_FLAT.forEach(function (item) {
+    var r = addFold(s, parseInt(item.w.hex, 16));
+    RPREFIX.push({ before: s, raw: r.raw, carry: r.carry, after: r.after });
+    s = r.after;
+  });
+  if (s !== 0xFFFF) console.warn("[自检] 接收方累加和异常：" + hex16(s));
+})();
+
+/* ==========================================================================
+ * 二、DOM 引用
+ * ==========================================================================*/
+function $(id) { return document.getElementById(id); }
+var btnPrev = $("btn-prev"), btnStep = $("btn-step");
+var btnPlay = $("btn-play"), btnPause = $("btn-pause"), btnReset = $("btn-reset");
+var btnTheme = $("btn-theme");
+var speedInput = $("speed"), speedVal = $("speed-val");
+var stageEl = $("stage"), linkEl = $("link"), packetEl = $("packet");
+var nodeSenderEl = $("node-sender"), nodeReceiverEl = $("node-receiver");
+var boardSenderEl = $("board-sender"), boardReceiverEl = $("board-receiver");
+var stepTitleEl = $("step-title"), stepDescEl = $("step-desc");
+var progressTextEl = $("progress-text"), progressFillEl = $("progress-fill");
+var progressDotsEl = $("progress-dots");
+var infoTitleEl = $("info-title"), infoBodyEl = $("info-body"), infoBackBtn = $("info-back");
+var shortcutListEl = $("shortcut-list");
+
+/* ==========================================================================
+ * 三、主题管理
+ * ==========================================================================*/
+var THEME_KEY = "udp-checksum-demo-theme";
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") || "light";
+}
+function applyTheme(theme, persist) {
+  document.documentElement.setAttribute("data-theme", theme);
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+  }
+  btnTheme.textContent = (theme === "dark") ? "☀️ 切换到浅色" : "🌙 切换到深色";
+  btnTheme.title = "快捷键：T（当前：" + (theme === "dark" ? "深色" : "浅色") + "）";
+}
+function toggleTheme() {
+  applyTheme(currentTheme() === "dark" ? "light" : "dark", true);
+}
+function initTheme() { applyTheme(currentTheme(), false); }
+
+/* ==========================================================================
+ * 四、信息面板生成器（纯函数）
+ * ==========================================================================*/
+function kv(rows) {
+  return '<table class="kv">' + rows.map(function (r) {
+    return "<tr><th>" + r[0] + '</th><td class="' + (r[2] || "") + '">' + r[1] + "</td></tr>";
+  }).join("") + "</table>";
+}
+function hexList(arr) {
+  return arr.map(function (h) { return "<code>0x" + h + "</code>"; }).join("<i>+</i>");
+}
+function calcTable(items) {
+  return '<div class="calc">' + items.map(function (it) {
+    var val = Array.isArray(it[1]) ? hexList(it[1]) : it[1];
+    return '<div class="calc-row ' + (it[2] || "") + '"><span>' + it[0] +
+           '</span><span class="calc-val">' + val + "</span></div>";
+  }).join("") + "</div>";
+}
+function packetHTML(checksumText, checksumCls, note) {
+  var html = kv([
+    ["源端口", "<code>0x1234</code>（十进制 4660）"],
+    ["目的端口", "<code>0x0050</code>（十进制 80）"],
+    ["UDP 长度", "<code>0x0010</code>（16 字节 = 首部 8 + 数据 8）"],
+    ["校验和", "<code>" + checksumText + "</code>", checksumCls || ""],
+    ["数据（ASCII）", "<code>“" + SCENARIO.dataAscii + "”</code>"],
+    ["数据（十六进制）", "<code>" + SCENARIO.dataHex + "</code>"]
+  ]);
+  if (note) html += '<p class="note">' + note + "</p>";
+  return html;
+}
+function pseudoHTML() {
+  return kv(WORDS.pseudo.map(function (w) {
+    var tail = w.note ? "　<span style='color:var(--text-dim)'>// " + w.note + "</span>" : "";
+    return [w.label, "<code>0x" + w.hex + "</code>" + tail];
+  }));
+}
+
+/* ==========================================================================
+ * 五、面板状态构造器（幂等快照的核心组件）
+ * ==========================================================================*/
+function N(sA, noteA, sB, noteB) {
+  return { sender: { status: sA, note: noteA }, receiver: { status: sB, note: noteB } };
+}
+function L(active, corrupted) { return { active: !!active, corrupted: !!corrupted }; }
+function P(id, x, label, sumText, extra) {
+  return Object.assign({ id: id, x: x, label: label, sumText: sumText }, extra || {});
+}
+var HIDDEN_S = { visible: false, note: "发送方尚未开始计算校验和。" };
+var HIDDEN_R = { visible: false, note: "接收方尚未收到数据报。" };
+
+/* 发送方竖式：k = 正在累加的字序号；-1 = 仅列出伪首部；"final" = 全部完成 */
+function senderBoardAt(k) {
+  var count = (k === "final" || k >= 10) ? 14 : (k >= 6 ? 10 : 6);
+  var rows = [];
+  for (var i = 0; i < count; i++) {
+    var it = FLAT[i];
+    var st = (k === "final") ? "done" : (i < k ? "done" : (i === k ? "cur" : "todo"));
+    rows.push({ label: it.w.label, hex: it.w.hex, note: it.w.note || "", group: it.group, st: st });
+  }
+  var b = { visible: true, rows: rows };
+  if (k === -1) {
+    b.tag = "已列出 6 字 · 待累加";
+    b.sum = { label: "初始累加和", value: "0x0000" };
+    b.note = "伪首部 6 字已列入竖式，将逐字累加（点击任意行查看含义）。";
+    return b;
+  }
+  if (k === "final") {
+    b.tag = "已加 14/14 字";
+    b.sum = { label: "最终累加和（反码和）", value: "0x9AF8" };
+    b.result = { cls: "good", text: "~0x9AF8 = 0x6507 → 已写入校验和字段" };
+    b.note = "校验和 0x6507 随数据报一起发送。";
+    return b;
+  }
+  var p = PREFIX[k];
+  var wv = parseInt(FLAT[k].w.hex, 16);
+  b.tag = "已加 " + (k + 1) + "/14 字";
+  b.expr = hex16(p.before) + " + " + hex16(wv) + " = " + rawHex(p.raw) + (p.carry ? "（产生进位）" : "（无进位）");
+  if (p.carry) b.carry = "进位回卷：" + hex16(p.raw & 0xFFFF) + " + 0x0001 = " + hex16(p.after);
+  b.sum = { label: "当前累加和（反码和）", value: hex16(p.after) };
+  if (k === 5)  b.note = "伪首部 6 字累加完成：0x8390。";
+  if (k === 9)  b.note = "首部 4 字累加完成（校验和字段暂按 0）：0x9624。";
+  if (k === 13) b.note = "14 字全部累加完成：0x9AF8，下一步逐位取反。";
+  return b;
+}
+
+/* 接收方竖式：g = 0 仅列出 / 1 加完伪首部 / 2 加完首部 / 3 加完数据 / 4 判定完成；
+   corrupt = 对比演示（1 位错误） */
+function receiverBoardAt(g, corrupt) {
+  var dataWords = corrupt ? WORDS.dataCorrupt : WORDS.data;
+  var words = [].concat(
+    WORDS.pseudo.map(function (w) { return { w: w, group: "伪首部" }; }),
+    WORDS.hdrReceiver.map(function (w) { return { w: w, group: "UDP 首部" }; }),
+    dataWords.map(function (w) { return { w: w, group: "数据" }; })
+  );
+  var rows = words.map(function (it, i) {
+    var st;
+    if (corrupt) st = "done";
+    else if (g === 0) st = "todo";
+    else if (g === 4) st = "done";
+    else {
+      var gi = i < 6 ? 1 : (i < 10 ? 2 : 3);
+      st = gi < g ? "done" : (gi === g ? "cur" : "todo");
+    }
+    if (corrupt && it.w.hex === "4F20") st = "bad";
+    var extra = (!corrupt && it.group === "UDP 首部" && it.w.hex === "6507") ? "key" : "";
+    return { label: it.w.label, hex: it.w.hex, note: it.w.note || "", group: it.group, st: st, extra: extra };
+  });
+
+  var b = { visible: true, rows: rows };
+  if (corrupt) {
+    b.tag = "校验失败";
+    b.expr = "0x8FBD + 0x4F20 + 0x2121 = 0xFFFE（比 0xFFFF 少 1）";
+    b.sum = { label: "累加和（含校验和字段）", value: "0xFFFE" };
+    b.result = { cls: "bad", text: "~0xFFFE = 0x0001 ≠ 0 → 校验失败，丢弃 ✗" };
+    b.note = "仅 1 位翻转即被检出（假想对比演示）。";
+    return b;
+  }
+  if (g === 0) {
+    b.tag = "已列出 14 字 · 待累加";
+    b.sum = { label: "初始累加和", value: "0x0000" };
+    b.note = "共 14 字将逐组累加；注意校验和字段 0x6507 一同参与（不置 0）。";
+    return b;
+  }
+  if (g === 1) {
+    b.tag = "已加 6/14 字";
+    b.expr = "伪首部 6 字原始和 0x1 838F → 进位回卷";
+    b.carry = "进位回卷：0x838F + 0x0001 = 0x8390";
+    b.sum = { label: "当前累加和", value: "0x8390" };
+    return b;
+  }
+  if (g === 2) {
+    b.tag = "已加 10/14 字";
+    b.expr = "0x8390 + 0x1234 + 0x0050 + 0x0010 + 0x6507 = 0xFB2B（无进位）";
+    b.sum = { label: "当前累加和", value: "0xFB2B" };
+    b.note = "与发送方的唯一差别：校验和字段按收到的 0x6507 参与累加。";
+    return b;
+  }
+  /* g === 3 或 4 */
+  b.tag = "已加 14/14 字";
+  b.expr = "0xFB2B + 0x4845 + 0x4C4C + 0x4F21 + 0x2121";
+  b.carry = "进位回卷：0xFB2B + 0x4845 = 0x1 4370 → 0x4371";
+  b.sum = { label: "累加和（含校验和字段）", value: "0xFFFF" };
+  if (g === 4) {
+    b.result = { cls: "good", text: "~0xFFFF = 0x0000 → 校验通过，交付上层 ✓" };
+    b.note = "传输无误时，“其余字之和 + 校验和”必为全 1（0xFFFF）。";
+  } else {
+    b.note = "累加和恰为 0xFFFF，下一步取反码判定。";
+  }
+  return b;
+}
+
+/* ==========================================================================
+ * 六、STEPS：27 步完整快照（加法步骤由脚本自动生成）
+ * ==========================================================================*/
+function makeAddStep(k) {
+  var item = FLAT[k], p = PREFIX[k];
+  var wv = parseInt(item.w.hex, 16);
+  var desc;
+  if (p.carry) {
+    desc = hex16(p.before) + " + " + hex16(wv) + " = " + rawHex(p.raw) +
+           "，超出 16 位，将进位 1 回卷加到最低位 → " + hex16(p.after) + "。";
+  } else {
+    desc = hex16(p.before) + " + " + hex16(wv) + " = " + hex16(p.after) + "，无进位。";
+  }
+  if (k === 5)  desc += "伪首部 6 字累加完成。";
+  if (k === 9)  desc += "首部 4 字累加完成。";
+  if (k === 13) desc += "全部 14 字累加完成，下一步取反码。";
+
+  var infoRows = [
+    ["加前累加和", "<code>" + hex16(p.before) + "</code>"],
+    ["+ 本字", "<code>" + hex16(wv) + "</code>　（" + item.w.label +
+      (item.w.note ? "，" + item.w.note : "") + "）"],
+    ["原始和", p.carry
+      ? "<code>" + rawHex(p.raw) + "</code>（超过 16 位，产生进位 1）"
+      : "<code>" + hex16(p.raw) + "</code>（未超过 16 位，无进位）",
+      p.carry ? "warn" : ""]
+  ];
+  if (p.carry) {
+    infoRows.push(["进位回卷", "<code>" + hex16(p.raw & 0xFFFF) + " + 0x0001 = " + hex16(p.after) + "</code>", "good"]);
+  }
+  infoRows.push(["新累加和", "<code>" + hex16(p.after) + "</code>", "good"]);
+
+  return {
+    title: "发送方累加：" + item.w.label,
+    desc: desc,
+    info: { title: "累加过程 · 第 " + (k + 1) + "/14 字", html: calcTable(infoRows) },
+    state: {
+      nodes: N("busy", "反码累加中（" + (k + 1) + "/14）", "wait", "等待接收数据报"),
+      link: L(false),
+      packet: P("p1", 0.03, "UDP 数据报", "校验和 0x0000（待计算）"),
+      senderBoard: senderBoardAt(k),
+      receiverBoard: HIDDEN_R
+    }
+  };
+}
+
+var STEPS = [
+  { title: "场景初始化",
+    desc: "主机 A（192.168.1.10，端口 0x1234）准备向主机 B（192.168.1.20，端口 80）发送 8 字节报文 “HELLO!!!”。UDP 无连接、尽最大努力交付，依靠校验和发现传输中的比特错误。",
+    info: { title: "实验场景", html:
+      kv([
+        ["发送方", "主机 A · <code>192.168.1.10</code> · 端口 <code>0x1234</code>"],
+        ["接收方", "主机 B · <code>192.168.1.20</code> · 端口 80（<code>0x0050</code>）"],
+        ["应用报文", "<code>“HELLO!!!”</code>（8 字节）"],
+        ["协议", "UDP（IP 协议号 17），校验和定义见 RFC 768"]
+      ]) +
+      '<p class="note">操作提示：空格播放/暂停；S/→ 单步；A/← 上一步；进度点可跳转任意已完成步骤；点击主机、数据包或竖式行可查看详情。</p>' },
+    state: { nodes: N("idle","空闲","idle","空闲"), link: L(false), packet: null,
+             senderBoard: HIDDEN_S, receiverBoard: HIDDEN_R } },
+
+  { title: "发送方：构建 UDP 数据报",
+    desc: "UDP 从应用层接过数据并添加首部：源端口 0x1234、目的端口 0x0050、长度 16 字节。校验和字段先暂置 0x0000，稍后计算回填。",
+    info: { title: "UDP 数据报字段（构建中）", html:
+      packetHTML("0x0000（待计算）", "hl",
+        "发送方先把校验和字段暂置 0，随后计算并回填 —— 这是 RFC 768 的标准做法。") },
+    state: { nodes: N("busy","构建 UDP 数据报","wait","等待接收数据报"), link: L(false),
+             packet: P("p1", 0.03, "UDP 数据报", "校验和 0x0000（待计算）"),
+             senderBoard: HIDDEN_S, receiverBoard: HIDDEN_R } },
+
+  { title: "发送方：构造伪首部，列入竖式",
+    desc: "先临时构造 12 字节伪首部：源 IP、目的 IP、全 0+协议号（17）、UDP 长度，共 6 个 16 位字，列入竖式等待累加。伪首部只参与计算，不会随数据报发送。",
+    info: { title: "伪首部（12 字节，仅参与计算）", html:
+      pseudoHTML() +
+      '<p class="note">伪首部使校验和顺带“保护”地址与协议上下文。<strong>它只在计算时临时构造，不会随数据报发送。</strong></p>' },
+    state: { nodes: N("busy","构造伪首部","wait","等待接收数据报"), link: L(false),
+             packet: P("p1", 0.03, "UDP 数据报", "校验和 0x0000（待计算）"),
+             senderBoard: senderBoardAt(-1), receiverBoard: HIDDEN_R } }
+];
+
+/* 发送方逐字累加：14 步（含两次进位回卷的实时演示） */
+for (var k = 0; k < 14; k++) STEPS.push(makeAddStep(k));
+
+STEPS.push(
+  { title: "发送方：取反码 → 写入校验和 0x6507",
+    desc: "对累加和 0x9AF8 逐位取反（一补码）：~0x9AF8 = 0x6507，写入校验和字段。数据报构建完毕。",
+    info: { title: "取反码 → 校验和", html:
+      calcTable([
+        ["累加和", "<code>0x9AF8</code>"],
+        ["逐位取反（一补码）", "<code>~0x9AF8 = 0x6507</code>", "good"],
+        ["写入首部", "校验和字段 ← <code>0x6507</code>", "good"]
+      ]) +
+      '<p class="note">补充：IPv4 中若校验和字段为 <code>0x0000</code> 表示“未计算校验和”；本例结果为 0x6507，不涉及该歧义。</p>' },
+    state: { nodes: N("busy","写入校验和","wait","等待接收数据报"), link: L(false),
+             packet: P("p1", 0.03, "UDP 数据报", "校验和 0x6507", { summed: true }),
+             senderBoard: senderBoardAt("final"), receiverBoard: HIDDEN_R } },
+
+  { title: "发送：数据报进入链路",
+    desc: "UDP 数据报交给 IP 层封装后发送（此处为简化演示：以直连链路示意，省略路由细节）。校验和字段 0x6507 随数据报一同传输。",
+    info: { title: "传输中（链路为简化示意）", html:
+      packetHTML("0x6507", "good", "数据报沿链路传向主机 B。此处为简化演示：省略 IP 封装、路由与排队细节。") },
+    state: { nodes: N("send","发送中","wait","等待接收数据报"), link: L(true),
+             packet: P("p1", 0.5, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: senderBoardAt("final"), receiverBoard: HIDDEN_R } },
+
+  { title: "接收方：收到数据报",
+    desc: "主机 B 收到数据报并取出 UDP 段，准备校验：同样构造伪首部，并把收到的校验和字段 0x6507 一并列入竖式。",
+    info: { title: "接收方准备校验", html:
+      packetHTML("0x6507", "",
+        "主机 B 按与发送方相同的规则求和，<strong>唯一区别</strong>：校验和字段不再置 0，而是按收到的值 <code>0x6507</code> 一同参与累加。") },
+    state: { nodes: N("done","发送完成","busy","接收数据报"), link: L(true),
+             packet: P("p1", 0.97, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: HIDDEN_R } },
+
+  { title: "接收方：列出校验竖式（14 字）",
+    desc: "伪首部 6 字 + 首部 4 字（含校验和 0x6507）+ 数据 4 字，共 14 字列入竖式，从 0x0000 开始累加。",
+    info: { title: "校验竖式已就绪", html:
+      kv([
+        ["参与累加", "伪首部 6 字 + UDP 首部 4 字 + 数据 4 字，共 14 字"],
+        ["关键差别", "校验和字段按收到的 <code>0x6507</code> 参与（紫色标出）"],
+        ["起始值", "<code>0x0000</code>"]
+      ]) + '<p class="note">点击竖式任意行可查看该 16 位字的含义。</p>' },
+    state: { nodes: N("done","发送完成","busy","构造校验竖式"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(0, false) } },
+
+  { title: "接收方累加：伪首部 6 字",
+    desc: "伪首部 6 字原始和 0x1 838F，进位回卷后得 0x8390（与发送方一致）。",
+    info: { title: "接收方累加 · 伪首部", html:
+      calcTable([
+        ["伪首部 6 字", ["C0A8","010A","C0A8","0114","0011","0010"]],
+        ["原始和", "<code>0x1 838F</code>（产生进位）", "warn"],
+        ["进位回卷", "<code>0x838F + 0x0001 = 0x8390</code>", "good"],
+        ["当前累加和", "<code>0x8390</code>", "good"]
+      ]) },
+    state: { nodes: N("done","发送完成","busy","累加伪首部"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(1, false) } },
+
+  { title: "接收方累加：首部 4 字（含校验和字段）",
+    desc: "0x8390 + 0x1234 + 0x0050 + 0x0010 + 0x6507 = 0xFB2B，无进位。注意校验和字段 0x6507 参与累加。",
+    info: { title: "接收方累加 · 首部（含校验和）", html:
+      calcTable([
+        ["加前累加和", "<code>0x8390</code>"],
+        ["+ 首部 4 字", ["1234","0050","0010","6507"]],
+        ["说明", "校验和字段 <code>0x6507</code> 参与累加（不置 0）"],
+        ["当前累加和", "<code>0x8390 + 0x779B = 0xFB2B</code>", "good"]
+      ]) },
+    state: { nodes: N("done","发送完成","busy","累加首部"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(2, false) } },
+
+  { title: "接收方累加：数据 4 字",
+    desc: "0xFB2B + 0x4845 = 0x1 4370，进位回卷 → 0x4371；继续加完数据，最终累加和恰为 0xFFFF。",
+    info: { title: "接收方累加 · 数据", html:
+      calcTable([
+        ["加前累加和", "<code>0xFB2B</code>"],
+        ["+ 数据字 1", "<code>0x4845</code>"],
+        ["原始和", "<code>0xFB2B + 0x4845 = 0x1 4370</code>（产生进位）", "warn"],
+        ["进位回卷", "<code>0x4370 + 0x0001 = 0x4371</code>"],
+        ["+ 其余 3 字", ["4C4C","4F21","2121"]],
+        ["最终累加和", "<code>0xFFFF</code>", "good"]
+      ]) },
+    state: { nodes: N("done","发送完成","busy","累加数据"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报", "校验和 0x6507"),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(3, false) } },
+
+  { title: "接收方：取反码判定 → 校验通过",
+    desc: "~0xFFFF = 0x0000 → 校验通过。主机 B 将数据交付端口 80 的应用进程。UDP 只能检错，不能纠错。",
+    info: { title: "校验通过，交付上层", html:
+      calcTable([
+        ["取反码", "<code>~0xFFFF = 0x0000</code>", "good"],
+        ["结论", "校验通过：数据交付端口 80 的应用进程", "good"]
+      ]) + '<p class="note">等价判据：累加和恰为 0xFFFF 即通过。</p>' },
+    state: { nodes: N("done","发送完成","ok","校验通过 · 交付上层"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报 ✓", "校验通过，已交付", { delivered: true }),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(4, false) } },
+
+  { title: "对比演示：传输中发生 1 位错误",
+    desc: "假想场景（此处为简化演示）：数据字 “O!” 翻转 1 位（0x4F21 → 0x4F20）。累加和变为 0xFFFE，取反得 0x0001 ≠ 0 → 校验失败，数据报被静默丢弃。",
+    info: { title: "对比：1 位错误即被检出（假想）", html:
+      calcTable([
+        ["被篡改数据字", "<code>0x4F21 → 0x4F20</code>（最低位翻转）", "bad"],
+        ["累加和", "<code>0xFFFF − 0x0001 = 0xFFFE</code>", "bad"],
+        ["取反码", "<code>~0xFFFE = 0x0001 ≠ 0</code>", "bad"],
+        ["结论", "校验失败：主机 B 静默丢弃该数据报", "bad"]
+      ]) + '<p class="note">校验和不能纠错，B 也不会通知 A 重传 —— UDP 没有重传机制。</p>' },
+    state: { nodes: N("send","（假想）发送中","err","校验失败 · 丢弃"), link: L(true, true),
+             packet: P("p2", 0.97, "UDP 数据报 ⚠", "数据已损坏：0x4F21 → 0x4F20", { corrupted: true }),
+             senderBoard: Object.assign(senderBoardAt("final"), { dim: true }),
+             receiverBoard: receiverBoardAt(0, true) } },
+
+  { title: "小结",
+    desc: "校验和覆盖 伪首部 + UDP 首部 + 数据，逐字反码累加、进位回卷；发送方写入取反结果，接收方连同校验和字段复检。可点击进度点回顾任意步骤，或按 R 重新开始。",
+    info: { title: "小结", html:
+      '<ul class="sum-list">' +
+      "<li><strong>覆盖范围：</strong>伪首部（12B）+ UDP 首部（8B）+ 数据，按 16 位字做反码求和。</li>" +
+      "<li><strong>发送方：</strong>校验和字段先置 0，算出后写入（本例 0x6507）。</li>" +
+      "<li><strong>接收方：</strong>校验和字段一同参与累加；补码为 0（等价：和为 0xFFFF）即通过，否则丢弃。</li>" +
+      "<li><strong>能力边界：</strong>只能检错（所有单比特/奇数位错误与 &lt;16 位突发错误均可检出，随机错误漏检概率约 2⁻¹⁶ 量级），不能纠错。</li>" +
+      "<li><strong>其他：</strong>IPv4 中 UDP 校验和可置 0 表示“未启用”；IPv6 中必须启用（RFC 8200）。</li>" +
+      "</ul>" },
+    state: { nodes: N("done","发送完成","ok","数据已交付"), link: L(false),
+             packet: P("p1", 0.97, "UDP 数据报 ✓", "校验通过，已交付", { delivered: true }),
+             senderBoard: senderBoardAt("final"),
+             receiverBoard: receiverBoardAt(4, false) } }
+);
+var LAST = STEPS.length - 1;
+
+/* ==========================================================================
+ * 七、幂等渲染层
+ * ==========================================================================*/
+var PKT_LEFT = 20, PKT_SPAN = 60;
+var lastPacketId = null;
+var boardWordMap = { sender: [], receiver: [] };
+
+function renderNodes(state) {
+  [ ["sender", nodeSenderEl], ["receiver", nodeReceiverEl] ].forEach(function (pair) {
+    var n = state.nodes[pair[0]];
+    pair[1].dataset.status = n.status;
+    pair[1].querySelector(".node-note").textContent = n.note;
+  });
+}
+function renderLink(state) {
+  linkEl.classList.toggle("active", !!state.link.active);
+  linkEl.classList.toggle("corrupted", !!state.link.corrupted);
+}
+function renderPacket(pkt, animate) {
+  if (!pkt) {
+    packetEl.classList.add("hidden");
+    packetEl.classList.remove("moving");
+    lastPacketId = null;
+    return;
+  }
+  var isNew = (lastPacketId !== pkt.id) || packetEl.classList.contains("hidden");
+  packetEl.classList.remove("hidden", "corrupted", "delivered", "summed");
+  if (pkt.corrupted) packetEl.classList.add("corrupted");
+  if (pkt.delivered) packetEl.classList.add("delivered");
+  if (pkt.summed)    packetEl.classList.add("summed");
+  packetEl.querySelector(".pkt-label").textContent = pkt.label;
+  packetEl.querySelector(".pkt-sum").textContent   = pkt.sumText;
+
+  var leftPct = PKT_LEFT + pkt.x * PKT_SPAN;
+  if (animate && !isNew) {
+    packetEl.style.setProperty("--pkt-dur", moveDurMs() + "ms");
+    packetEl.classList.add("moving");
+  } else {
+    packetEl.classList.remove("moving");   /* 回退/跳转：直接落位 */
+  }
+  packetEl.style.left = leftPct + "%";
+  lastPacketId = pkt.id;
+}
+function renderBoard(key, b, animate) {
+  var el = (key === "sender") ? boardSenderEl : boardReceiverEl;
+  var body = el.querySelector(".board-body");
+  var tagEl = el.querySelector(".board-tag");
+  el.classList.toggle("dim", !!(b && b.dim));
+  boardWordMap[key] = [];
+  if (!b || !b.visible) {
+    tagEl.textContent = "";
+    body.innerHTML = '<div class="board-empty">' + ((b && b.note) || "") + "</div>";
+    return;
+  }
+  if (tagEl) tagEl.textContent = b.tag || "";
+  var parts = [];
+  b.rows.forEach(function (r) {
+    var i = boardWordMap[key].length;
+    boardWordMap[key].push({ label: r.label, hex: r.hex, note: r.note || "", group: r.group || "" });
+    var animCls = (animate && r.st === "cur") ? " anim" : "";
+    parts.push('<div class="brow st-' + r.st + " " + (r.extra || "") + animCls +
+               '" data-i="' + i + '" title="点击查看详情">' +
+               '<span class="bmark"></span><span class="blabel">' + r.label +
+               '</span><code class="bhex">0x' + r.hex + "</code></div>");
+  });
+  if (b.expr)  parts.push('<div class="bexpr' + (animate ? " anim" : "") + '">' + b.expr + "</div>");
+  if (b.carry) parts.push('<div class="bcarry' + (animate ? " anim" : "") + '">⤴ ' + b.carry + "</div>");
+  if (b.sum) {
+    parts.push('<div class="brow sum"><span class="bmark"></span><span class="blabel">' +
+      (b.sum.label || "当前累加和") + '</span><code class="bhex">' + b.sum.value + "</code></div>");
+  }
+  if (b.result) parts.push('<div class="bresult ' + (b.result.cls || "") + '">' + b.result.text + "</div>");
+  if (b.note)   parts.push('<p class="board-note">' + b.note + "</p>");
+  body.innerHTML = parts.join("");
+}
+function renderStepText(i) {
+  stepTitleEl.textContent = STEPS[i].title;
+  stepDescEl.textContent  = STEPS[i].desc;
+}
+function renderInfo(info, selected) {
+  infoTitleEl.textContent = info.title;
+  infoBodyEl.innerHTML = info.html;
+  infoBackBtn.classList.toggle("hidden", !selected);
+}
+
+/* 统一幂等渲染入口：任意快照 → 完整重绘 */
+function renderState(state, options) {
+  var opt = options || {};
+  var animate = !!opt.animate;
+  var stepIndex = (opt.stepIndex !== undefined) ? opt.stepIndex : currentIndex;
+
+  renderNodes(state);
+  renderLink(state);
+  renderPacket(state.packet, animate);
+  renderBoard("sender", state.senderBoard, animate);
+  renderBoard("receiver", state.receiverBoard, animate);
+  renderStepText(stepIndex);
+
+  currentSelection = null;
+  renderInfo(STEPS[stepIndex].info, false);
+  updateControls();
+}
+
+/* ==========================================================================
+ * 八、控制层（唯一入口 goToStep）
+ * ==========================================================================*/
+var currentIndex = 0;
+var maxReached = 0;
+var playing = false;
+var isResetting = false;
+var playTimer = null;
+var speed = 1;
+var currentSelection = null;
+
+function stepIntervalMs() { return 3200 / speed; }
+function moveDurMs() { return Math.max(350, Math.min(2600, 2100 / speed)); }
+
+function goToStep(index, options) {
+  var opt = options || {};
+  var animate = (opt.animate !== undefined) ? opt.animate : true;
+  if (index < 0) index = 0;
+  if (index > LAST) index = LAST;
+  var forward = index > currentIndex;
+  currentIndex = index;
+  if (index > maxReached) maxReached = index;
+  renderState(STEPS[index].state, { animate: animate && forward, stepIndex: index });
+}
+function stepForward() {
+  if (isResetting) return;
+  if (playing) pause();
+  if (currentIndex >= LAST) return;
+  goToStep(currentIndex + 1, { animate: true });
+}
+function stepBackward() {
+  if (isResetting) return;
+  if (playing) pause();
+  if (currentIndex <= 0) return;
+  goToStep(currentIndex - 1, { animate: false });
+}
+function jumpTo(i) {
+  if (playing) pause();
+  if (isResetting || i > maxReached || i === currentIndex) return;
+  goToStep(i, { animate: false });
+}
+function play() {
+  if (isResetting || playing) return;
+  if (currentIndex >= LAST) goToStep(0, { animate: false });
+  playing = true;
+  updateControls();
+  playTimer = setTimeout(tick, 500);
+}
+function tick() {
+  if (!playing) return;
+  if (currentIndex >= LAST) { pause(); return; }
+  goToStep(currentIndex + 1, { animate: true });
+  playTimer = setTimeout(tick, stepIntervalMs());
+}
+function pause() {
+  playing = false;
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  updateControls();
+}
+function togglePlay() { if (playing) pause(); else play(); }
+function reset() {
+  if (isResetting) return;
+  pause();
+  isResetting = true;
+  maxReached = 0;
+  stageEl.classList.add("flash-reset");
+  goToStep(0, { animate: false });
+  setTimeout(function () {
+    isResetting = false;
+    stageEl.classList.remove("flash-reset");
+    updateControls();
+  }, 450);
+}
+function updateControls() {
+  btnPrev.disabled  = isResetting || currentIndex <= 0;
+  btnStep.disabled  = isResetting || currentIndex >= LAST;
+  btnPlay.disabled  = isResetting || playing;
+  btnPause.disabled = isResetting || !playing;
+  btnReset.disabled = isResetting;
+
+  progressTextEl.textContent = "第 " + (currentIndex + 1) + " / " + STEPS.length + " 步";
+  progressFillEl.style.width = (LAST ? (currentIndex / LAST) * 100 : 0) + "%";
+  dots.forEach(function (d, i) {
+    d.classList.toggle("current", i === currentIndex);
+    d.classList.toggle("reached", i <= maxReached && i !== currentIndex);
+    d.disabled = isResetting || i > maxReached || i === currentIndex;
+  });
+}
+
+/* ==========================================================================
+ * 九、点击交互 → 信息面板
+ * ==========================================================================*/
+function nodeInfo(id) {
+  var st = STEPS[currentIndex].state.nodes[id];
+  var rows = (id === "sender")
+    ? [ ["名称", "主机 A（发送方）"], ["IP 地址", "<code>192.168.1.10</code>"],
+        ["UDP 端口", "<code>0x1234</code>（十进制 4660）"], ["职责", "构建数据报并计算校验和"] ]
+    : [ ["名称", "主机 B（接收方）"], ["IP 地址", "<code>192.168.1.20</code>"],
+        ["UDP 端口", "<code>0x0050</code>（十进制 80）"], ["职责", "校验并交付数据报"] ];
+  rows.push(["当前状态", st.note]);
+  return { title: (id === "sender" ? "节点详情 · 主机 A" : "节点详情 · 主机 B"), html: kv(rows) };
+}
+function showNodeInfo(id) {
+  currentSelection = { type: "node", id: id };
+  renderInfo(nodeInfo(id), true);
+}
+function packetChecksumView() {
+  var i = currentIndex;
+  if (i >= 1 && i <= 15) return { text: "0x0000（待计算）", cls: "hl" };
+  if (i === 25) return { text: "0x6507（数据字已损坏）", cls: "bad" };
+  return { text: "0x6507", cls: "good" };
+}
+function showPacketInfo() {
+  var pkt = STEPS[currentIndex].state.packet;
+  if (!pkt) return;
+  var status = pkt.corrupted ? "⚠ 传输中损坏（假想对比演示）"
+             : pkt.delivered ? "✓ 已交付上层"
+             : "传输 / 待处理";
+  var cv = packetChecksumView();
+  currentSelection = { type: "packet" };
+  renderInfo({
+    title: "数据包详情 · " + pkt.label,
+    html: packetHTML(cv.text, cv.cls,
+      "当前状态：" + status + "。校验和覆盖范围 = 伪首部 + UDP 首部 + 数据（16 位反码求和）。")
+  }, true);
+}
+function wordInfo(key, i) {
+  var w = boardWordMap[key][i];
+  if (!w) return null;
+  var rows = [
+    ["名称", w.label],
+    ["16 位值", "<code>0x" + w.hex + "</code>"],
+    ["所属", w.group || "—"],
+    ["说明", w.note || "—"]
+  ];
+  var extra = "";
+  if (w.group === "伪首部") {
+    extra = '<p class="note">伪首部仅在计算校验和时临时构造，不会随数据报发送。</p>';
+  }
+  return { title: "字段详情 · 16 位字", html: kv(rows) + extra };
+}
+function onBoardClick(e, key) {
+  var row = e.target.closest(".brow");
+  if (!row || row.dataset.i === undefined) return;
+  var info = wordInfo(key, +row.dataset.i);
+  if (!info) return;
+  currentSelection = { type: "word", key: key, i: +row.dataset.i };
+  renderInfo(info, true);
+}
+function backToStepInfo() {
+  currentSelection = null;
+  renderInfo(STEPS[currentIndex].info, false);
+}
+
+/* ==========================================================================
+ * 十、快捷键
+ * ==========================================================================*/
+var SHORTCUTS = [
+  { code: "Space",      display: "空格", label: "播放 / 暂停", allowRepeat: false,
+    getBtn: function () { return playing ? btnPause : btnPlay; }, action: togglePlay },
+  { code: "ArrowRight", display: "→",   label: "单步执行（下一步）", allowRepeat: true,
+    getBtn: function () { return btnStep; }, action: stepForward },
+  { code: "KeyS",       display: "S",    label: "单步执行（下一步）", allowRepeat: true,
+    getBtn: function () { return btnStep; }, action: stepForward },
+  { code: "ArrowLeft",  display: "←",   label: "上一步", allowRepeat: true,
+    getBtn: function () { return btnPrev; }, action: stepBackward },
+  { code: "KeyA",       display: "A",    label: "上一步", allowRepeat: true,
+    getBtn: function () { return btnPrev; }, action: stepBackward },
+  { code: "KeyR",       display: "R",    label: "重置", allowRepeat: false,
+    getBtn: function () { return btnReset; }, action: reset },
+  { code: "KeyT",       display: "T",    label: "切换主题", allowRepeat: false,
+    getBtn: function () { return btnTheme; }, action: toggleTheme }
+];
+function flashButton(btn) {
+  if (!btn) return;
+  btn.classList.remove("kb-flash");
+  void btn.offsetWidth;
+  btn.classList.add("kb-flash");
+}
+function onShortcutKeyDown(e) {
+  var t = e.target;
+  if (t && t.matches && (t.matches("input, textarea, select") || t.isContentEditable)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  var sc = null;
+  for (var i = 0; i < SHORTCUTS.length; i++) {
+    if (SHORTCUTS[i].code === e.code) { sc = SHORTCUTS[i]; break; }
+  }
+  if (!sc) return;
+  e.preventDefault();
+  if (document.hidden || isResetting) return;
+  if (e.repeat && !sc.allowRepeat) return;
+  flashButton(sc.getBtn());
+  sc.action();
+}
+function bindShortcuts() {
+  document.addEventListener("keydown", onShortcutKeyDown);
+}
+function renderShortcutList() {
+  var map = new Map();
+  SHORTCUTS.forEach(function (s) {
+    if (!map.has(s.label)) map.set(s.label, []);
+    map.get(s.label).push(s.display);
+  });
+  var html = "";
+  map.forEach(function (keys, label) {
+    html += '<div class="sc-row"><span>' +
+      keys.map(function (k) { return '<kbd class="kbd">' + k + "</kbd>"; }).join(" ") +
+      '</span><span class="sc-label">' + label + "</span></div>";
+  });
+  shortcutListEl.innerHTML = html;
+}
+
+/* ==========================================================================
+ * 十一、进度点 / 事件绑定 / 初始化
+ * ==========================================================================*/
+var dots = [];
+function buildProgressDots() {
+  STEPS.forEach(function (s, i) {
+    var d = document.createElement("button");
+    d.type = "button";
+    d.className = "dot";
+    d.title = "第 " + (i + 1) + " 步 · " + s.title;
+    d.setAttribute("aria-label", d.title);
+    d.addEventListener("click", function () { jumpTo(i); });
+    progressDotsEl.appendChild(d);
+    dots.push(d);
+  });
+}
+function bindEvents() {
+  btnPrev.addEventListener("click", stepBackward);
+  btnStep.addEventListener("click", stepForward);
+  btnPlay.addEventListener("click", play);
+  btnPause.addEventListener("click", pause);
+  btnReset.addEventListener("click", reset);
+  btnTheme.addEventListener("click", toggleTheme);
+  infoBackBtn.addEventListener("click", backToStepInfo);
+
+  speedInput.addEventListener("input", function () {
+    speed = parseFloat(speedInput.value);
+    speedVal.textContent = speed.toFixed(2) + "×";
+    if (playing) {
+      clearTimeout(playTimer);
+      playTimer = setTimeout(tick, stepIntervalMs());
+    }
+  });
+
+  nodeSenderEl.addEventListener("click", function () { showNodeInfo("sender"); });
+  nodeReceiverEl.addEventListener("click", function () { showNodeInfo("receiver"); });
+  packetEl.addEventListener("click", showPacketInfo);
+  boardSenderEl.addEventListener("click", function (e) { onBoardClick(e, "sender"); });
+  boardReceiverEl.addEventListener("click", function (e) { onBoardClick(e, "receiver"); });
+
+  nodeSenderEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); showNodeInfo("sender"); }
+  });
+  nodeReceiverEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); showNodeInfo("receiver"); }
+  });
+  packetEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); showPacketInfo(); }
+  });
+}
+function init() {
+  initTheme();
+  buildProgressDots();
+  renderShortcutList();
+  bindEvents();
+  bindShortcuts();
+  goToStep(0, { animate: false });
+}
+try {
+  init();
+} catch (err) {
+  console.error(err);
+  var banner = document.getElementById("error-banner");
+  if (banner) {
+    banner.textContent = "初始化失败：" + err.message;
+    banner.classList.remove("hidden");
+  }
+}
+</script>
+</body>
+</html>
