@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>计算机网络实验：RDT 可靠数据传输 FSM 交互演示</title>
+<style>
+  /* =========================================
+     1. CSS 变量与主题 (Theme Variables)
+     ========================================= */
+  :root {
+    --bg: #f8f9fa;
+    --text: #212529;
+    --panel-bg: #ffffff;
+    --border: #dee2e6;
+    --node-bg: #e9ecef;
+    --node-stroke: #6c757d;
+    --link-stroke: #adb5bd;
+    --channel-bg: rgba(0,0,0,0.035);
+    --shadow: rgba(0,0,0,0.05);
+
+    --pkt-data: #0d6efd;
+    --pkt-ack: #198754;
+    --pkt-nak: #dc3545;
+
+    --fsm-state: #e9ecef;
+    --fsm-state-active: #ffc107;
+    --fsm-arrow: #6c757d;
+    --timer-bg: #e9ecef;
+    --timer-fill: #fd7e14;
+
+    --btn-primary: #0d6efd;
+    --btn-disabled: #e9ecef;
+    --text-disabled: #6c757d;
+
+    --log-sender: #0d6efd;
+    --log-receiver: #198754;
+    --log-channel: #dc3545;
+  }
+
+  [data-theme="dark"] {
+    --bg: #121417;
+    --text: #e9ecef;
+    --panel-bg: #1e2125;
+    --border: #343a40;
+    --node-bg: #2b3035;
+    --node-stroke: #6c757d;
+    --link-stroke: #495057;
+    --channel-bg: rgba(255,255,255,0.04);
+    --shadow: rgba(0,0,0,0.3);
+
+    --pkt-data: #3d8bfd;
+    --pkt-ack: #28a745;
+    --pkt-nak: #e35d6a;
+
+    --fsm-state: #2b3035;
+    --fsm-state-active: #ffcd39;
+    --fsm-arrow: #868e96;
+    --timer-bg: #343a40;
+    --timer-fill: #ff983e;
+
+    --btn-primary: #0d6efd;
+    --btn-disabled: #343a40;
+    --text-disabled: #6c757d;
+
+    --log-sender: #3d8bfd;
+    --log-receiver: #28a745;
+    --log-channel: #e35d6a;
+  }
+
+  /* =========================================
+     2. 基础布局 (Base Layout)
+     ========================================= */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    transition: background-color 0.3s, color 0.3s;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  .app-container { display: flex; flex-direction: column; height: 100vh; max-width: 1600px; margin: 0 auto; padding: 16px; }
+
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--border); }
+  header h1 { font-size: 1.4rem; font-weight: 600; }
+  .header-controls { display: flex; gap: 12px; align-items: center; }
+
+  select { padding: 6px 12px; border: 1px solid var(--border); background: var(--panel-bg); color: var(--text); border-radius: 6px; font-size: 0.9rem; cursor: pointer; }
+  .theme-toggle { background: var(--panel-bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+
+  .workspace { display: flex; gap: 24px; flex: 1; min-height: 0; }
+
+  /* =========================================
+     3. 渲染区 (Topology / Sequence / FSM)
+     ========================================= */
+  .main-area { flex: 2; position: relative; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 6px var(--shadow); overflow: hidden; min-height: 600px; }
+  #svg-layer, #canvas-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  #canvas-layer { pointer-events: none; }
+
+  .node rect { fill: var(--node-bg); stroke: var(--node-stroke); stroke-width: 2; rx: 8; ry: 8; }
+  .node text { fill: var(--text); font-family: sans-serif; font-weight: bold; font-size: 14px; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
+
+  .lifeline { stroke: var(--link-stroke); stroke-width: 2; stroke-dasharray: 6 5; }
+  .channel-band { fill: var(--channel-bg); stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 4; rx: 8; ry: 8; }
+  .band-label { fill: var(--text-disabled); font-size: 12px; font-family: sans-serif; text-anchor: middle; }
+  .app-arrow { stroke: var(--fsm-arrow); stroke-width: 2; marker-end: url(#arrowhead); }
+  .app-arrow-label { fill: var(--text-disabled); font-size: 11px; font-family: monospace; }
+
+  .fsm-state circle { fill: var(--fsm-state); stroke: var(--fsm-arrow); stroke-width: 2; transition: fill 0.3s, stroke 0.3s; }
+  .fsm-state text { fill: var(--text); font-size: 12px; font-family: monospace; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+  .fsm-state.active circle { fill: var(--fsm-state-active); stroke: #fff; stroke-width: 4; filter: drop-shadow(0 0 8px var(--fsm-state-active)); }
+  .fsm-arrow { stroke: var(--fsm-arrow); stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+  .fsm-arrow-label { fill: var(--text-disabled); font-size: 10px; font-family: sans-serif; text-anchor: middle; }
+  .fsm-title { fill: var(--text); font-size: 16px; font-weight: bold; font-family: sans-serif; text-anchor: middle; }
+
+  .timer-container { fill: var(--timer-bg); stroke: var(--node-stroke); stroke-width: 1; rx: 4; ry: 4; }
+  .timer-fill { fill: var(--timer-fill); }
+  .timer-text { fill: var(--text); font-size: 10px; font-family: monospace; text-anchor: middle; dominant-baseline: middle; }
+
+  /* =========================================
+     4. 侧边栏 (Sidebar)
+     ========================================= */
+  .sidebar { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 320px; max-width: 400px; overflow-y: auto; }
+  .panel { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px var(--shadow); }
+  .panel h3 { font-size: 1rem; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; color: var(--btn-primary); }
+
+  .step-note { background: rgba(255, 193, 7, 0.1); border-left: 4px solid var(--fsm-state-active); padding: 8px 12px; font-size: 0.85rem; margin-top: 12px; border-radius: 0 4px 4px 0; }
+  [data-theme="dark"] .step-note { background: rgba(255, 205, 57, 0.1); }
+
+  .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+  .btn { padding: 8px; border: 1px solid var(--border); background: var(--panel-bg); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+  .btn:hover:not(:disabled) { background: var(--btn-primary); color: white; border-color: var(--btn-primary); }
+  .btn:disabled { background: var(--btn-disabled); color: var(--text-disabled); cursor: not-allowed; }
+  .btn.flash { animation: flash-anim 0.3s ease-out; }
+  @keyframes flash-anim { 0% { box-shadow: 0 0 0 0 rgba(13,110,253,0.7); } 70% { box-shadow: 0 0 0 10px rgba(13,110,253,0); } 100% { box-shadow: 0 0 0 0 rgba(13,110,253,0); } }
+
+  .speed-control { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+  .speed-control input { flex: 1; }
+
+  .progress-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .progress-fill { height: 100%; background: var(--btn-primary); width: 0%; transition: width 0.3s ease; }
+
+  .log-list { max-height: 200px; overflow-y: auto; font-size: 0.8rem; font-family: monospace; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--bg); }
+  .log-item { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+  .log-item:last-child { border-bottom: none; }
+  .log-entity { font-weight: bold; margin-right: 8px; }
+  .log-entity.sender { color: var(--log-sender); }
+  .log-entity.receiver { color: var(--log-receiver); }
+  .log-entity.channel { color: var(--log-channel); }
+
+  .info-content table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .info-content th, .info-content td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+
+  .legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85rem; }
+  .legend-item { display: flex; align-items: center; gap: 8px; }
+  .color-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.1); }
+
+  .shortcuts-list { font-size: 0.85rem; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin-top: 12px; }
+  .kbd { background: var(--node-bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-family: monospace; font-size: 0.8rem; text-align: center; }
+
+  footer { margin-top: 16px; font-size: 0.8rem; color: var(--text-disabled); text-align: center; padding: 12px; border-top: 1px solid var(--border); }
+
+  @media (max-width: 1000px) { .workspace { flex-direction: column; } .sidebar { max-width: 100%; min-width: auto; } .main-area { min-height: 500px; } }
+</style>
+</head>
+<body>
+
+<div class="app-container">
+  <header>
+    <h1>🌐 RDT 可靠数据传输 FSM 交互演示 (rdt3.0)</h1>
+    <div class="header-controls">
+      <select id="scenario-select" title="选择故障场景">
+        <option value="normal">场景 1：完美信道 (无错误)</option>
+        <option value="pkt_loss">场景 2：数据包丢失 (超时重传)</option>
+        <option value="ack_loss">场景 3：ACK 丢失 (重复包处理)</option>
+        <option value="bit_error">场景 4：比特差错 (校验和失败)</option>
+      </select>
+      <button id="btn-theme" class="theme-toggle" title="切换主题 (T)">🌙 Dark</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <div class="main-area" id="topology-container">
+      <svg id="svg-layer" viewBox="0 0 1000 800" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="var(--fsm-arrow)" />
+          </marker>
+        </defs>
+      </svg>
+      <canvas id="canvas-layer"></canvas>
+    </div>
+
+    <aside class="sidebar">
+      <div class="panel">
+        <h3 id="step-title">初始状态</h3>
+        <p id="step-desc" style="font-size: 0.9rem; margin-bottom: 8px;">实验尚未开始。</p>
+        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-disabled);">
+          <span>进度</span><span id="step-progress">0 / 0</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div id="step-note" class="step-note" style="display: none;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>控制面板</h3>
+        <div class="controls">
+          <button id="btn-prev" class="btn" title="上一步 (A / ←)">◀ 上一步</button>
+          <button id="btn-play" class="btn" title="播放/暂停 (Space)">▶ 播放</button>
+          <button id="btn-next" class="btn" title="单步执行 (S / →)">单步 ▶</button>
+          <button id="btn-reset" class="btn" style="grid-column: span 3;" title="重置 (R)">↺ 重置当前场景</button>
+          <div class="speed-control" style="grid-column: span 3; margin-top: 8px;">
+            <span>速度:</span>
+            <input type="range" id="speed-slider" min="0.25" max="3" step="0.25" value="1">
+            <span id="speed-val">1.0×</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>状态转移日志 (时间轴)</h3>
+        <div id="log-list" class="log-list"><div style="color: var(--text-disabled); text-align: center; padding: 20px 0;">暂无日志</div></div>
+      </div>
+
+      <div class="panel">
+        <h3>详细信息</h3>
+        <div id="info-panel" class="info-content"><p style="color: var(--text-disabled);">点击飞行中/已完成的数据包查看协议字段。</p></div>
+      </div>
+
+      <div class="panel">
+        <h3>图例与快捷键</h3>
+        <div class="legend-grid" style="margin-bottom: 12px;">
+          <div class="legend-item"><span class="color-dot" style="background: var(--pkt-data)"></span> 数据包 (Data)</div>
+          <div class="legend-item"><span class="color-dot" style="background: var(--pkt-ack)"></span> 确认 (ACK)</div>
+          <div class="legend-item"><span class="color-dot" style="background: var(--pkt-nak)"></span> 损坏/错误 (Error)</div>
+          <div class="legend-item"><span class="color-dot" style="background: var(--fsm-state-active)"></span> 当前 FSM 状态</div>
+        </div>
+        <div class="shortcuts-list">
+          <span class="kbd">Space</span> <span>播放 / 暂停</span>
+          <span class="kbd">S / →</span> <span>单步执行</span>
+          <span class="kbd">A / ←</span> <span>上一步</span>
+          <span class="kbd">R</span> <span>重置</span>
+          <span class="kbd">T</span> <span>切换主题</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <strong>教学简化说明：</strong> 信道区域采用"时空图"画法（水平轴=空间，垂直轴=时间），斜向箭头即一次传输，之字形轨迹即来回传输过程。本演示基于 rdt3.0 停等协议；[不确定/需核实] 实际 TCP 使用滑动窗口与基于 RTT 的动态超时（Jacobson/Karels），此处为固定超时以简化演示。
+  </footer>
+</div>
+
+<script>
+/**
+ * =================================================================
+ * RDT 可靠数据传输 FSM 交互演示
+ * 信道区域 = 时空图：斜向箭头体现数据包"来回传输"的完整过程
+ * =================================================================
+ */
+
+// ==========================================
+// 1. 常量与工具 (Constants & Utilities)
+// ==========================================
+
+function getCssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+/* 时空图几何常量（逻辑坐标 1000x800） */
+const GEO = {
+  SX: 150,            // 发送方生命线 x
+  RX: 850,            // 接收方生命线 x
+  LIFE_TOP: 165,      // 生命线起点
+  LIFE_BOT: 460,      // 生命线终点
+  FLIGHT_Y0: 200,     // 第 0 次传输的起始 y
+  FLIGHT_ROW: 62,     // 每次传输占用的行高
+  FLIGHT_DROP: 44     // 单次传输的时间下落量
+};
+
+// ==========================================
+// 2. 拓扑与 FSM 定义 (Topology & FSM Definition)
+// ==========================================
+
+const NODES = [
+  { id: 'sender_app',   name: 'Sender App',   x: 150, y: 50,  w: 130, h: 50 },
+  { id: 'receiver_app', name: 'Receiver App', x: 850, y: 50,  w: 130, h: 50 },
+  { id: 'sender_fsm',   name: 'Sender FSM',   x: 150, y: 140, w: 130, h: 50 },
+  { id: 'receiver_fsm', name: 'Receiver FSM', x: 850, y: 140, w: 130, h: 50 }
+];
+
+const FSM_STATES = {
+  sender: [
+    { id: 'wait_call_0', label: 'Wait call 0', x: 250, y: 590 },
+    { id: 'wait_ack_0',  label: 'Wait ACK 0',  x: 450, y: 590 },
+    { id: 'wait_call_1', label: 'Wait call 1', x: 250, y: 720 },
+    { id: 'wait_ack_1',  label: 'Wait ACK 1',  x: 450, y: 720 }
+  ],
+  receiver: [
+    { id: 'wait_0', label: 'Wait 0', x: 650, y: 590 },
+    { id: 'wait_1', label: 'Wait 1', x: 850, y: 590 }
+  ]
+};
+
+// ==========================================
+// 3. 场景数据 (Scenarios Data)
+//    motion.path 必须与时空图行号一致：
+//    第 n 次传输: y = FLIGHT_Y0 + n*FLIGHT_ROW → +FLIGHT_DROP
+// ==========================================
+
+const scenarios = {
+  normal: {
+    steps: [
+      {
+        title: "第 1 步：发送 pkt0 并收到 ACK0 (完美传输)",
+        desc: "发送方发出 pkt0（斜向右下）；接收方校验正确后交付数据并回复 ACK0（斜向左下）。一来一回构成之字形轨迹。",
+        motions: [
+          { id: "p1", label: "pkt0", kind: "data", path: [{x:150,y:200},{x:850,y:244}], delay: 0, duration: 1200, fields: { "Seq": 0, "Data": "Hello", "Checksum": "0x1A" } },
+          { id: "a1", label: "ACK0", kind: "ack",  path: [{x:850,y:262},{x:150,y:306}], delay: 1300, duration: 1000, fields: { "ACK": 0, "Checksum": "0x2B" } }
+        ],
+        state: { senderFsm: "wait_call_1", receiverFsm: "wait_1", timerActive: false, timerProgress: 0,
+          logs: [
+            { time: "0.0s", entity: "Sender",   event: "rdt_send(data)",  action: "make_pkt(0), start_timer", next: "Wait ACK 0" },
+            { time: "1.2s", entity: "Receiver", event: "rcv pkt0 (OK)",   action: "extract, deliver, send ACK0", next: "Wait 1" },
+            { time: "2.5s", entity: "Sender",   event: "rcv ACK0",        action: "stop_timer", next: "Wait call 1" }
+          ], note: "一次完整的停等传输周期结束。", focus: null }
+      }
+    ]
+  },
+  pkt_loss: {
+    steps: [
+      {
+        title: "第 1 步：pkt0 在信道中丢失",
+        desc: "pkt0 飞行至信道中途消失（✕）。接收方未收到任何数据，保持 Wait 0；发送方定时器持续计时。",
+        motions: [
+          { id: "p1", label: "pkt0", kind: "data", path: [{x:150,y:200},{x:850,y:244}], delay: 0, duration: 1200, lost: true, fields: { "Seq": 0, "Data": "Hello", "Checksum": "0x1A" } }
+        ],
+        state: { senderFsm: "wait_ack_0", receiverFsm: "wait_0", timerActive: true, timerProgress: 0.6,
+          logs: [
+            { time: "0.0s", entity: "Sender",  event: "rdt_send",    action: "send pkt0, start_timer", next: "Wait ACK 0" },
+            { time: "0.6s", entity: "Channel", event: "Packet Lost", action: "drop packet", next: "-" }
+          ], note: "💡 提示：信道不可靠，包可能凭空消失。发送方只能依赖定时器超时感知丢失。", focus: null }
+      },
+      {
+        title: "第 2 步：超时重传 pkt0 并收到 ACK0",
+        desc: "定时器到期 → 重传 pkt0（第二行斜线）→ 接收方回复 ACK0（第三行斜线，回程）。之字形来回完成。",
+        motions: [
+          { id: "p2", label: "pkt0 (Retx)", kind: "data", path: [{x:150,y:262},{x:850,y:306}], delay: 0, duration: 1200, fields: { "Seq": 0, "Data": "Hello", "Checksum": "0x1A" } },
+          { id: "a1", label: "ACK0", kind: "ack", path: [{x:850,y:324},{x:150,y:368}], delay: 1300, duration: 1000, fields: { "ACK": 0 } }
+        ],
+        state: { senderFsm: "wait_call_1", receiverFsm: "wait_1", timerActive: false, timerProgress: 0,
+          logs: [
+            { time: "3.0s", entity: "Sender",   event: "Timeout",       action: "retransmit pkt0, restart_timer", next: "Wait ACK 0" },
+            { time: "4.2s", entity: "Receiver", event: "rcv pkt0 (OK)", action: "deliver_data, send ACK0", next: "Wait 1" },
+            { time: "5.5s", entity: "Sender",   event: "rcv ACK0",      action: "stop_timer", next: "Wait call 1" }
+          ], note: "超时重传机制成功恢复了丢失的数据包。", focus: null }
+      }
+    ]
+  },
+  ack_loss: {
+    steps: [
+      {
+        title: "第 1 步：pkt0 到达，但 ACK0 回程丢失",
+        desc: "去程 pkt0 正常到达（第一行）；接收方交付数据并发送 ACK0，但 ACK0 在回程信道中途消失（第二行 ✕）。",
+        motions: [
+          { id: "p1", label: "pkt0", kind: "data", path: [{x:150,y:200},{x:850,y:244}], delay: 0, duration: 1000, fields: { "Seq": 0 } },
+          { id: "a1", label: "ACK0", kind: "ack",  path: [{x:850,y:262},{x:150,y:306}], delay: 1100, duration: 1000, lost: true, fields: { "ACK": 0 } }
+        ],
+        state: { senderFsm: "wait_ack_0", receiverFsm: "wait_1", timerActive: true, timerProgress: 0.8,
+          logs: [
+            { time: "1.0s", entity: "Receiver", event: "rcv pkt0",   action: "deliver, send ACK0", next: "Wait 1" },
+            { time: "1.6s", entity: "Channel",  event: "ACK Lost",   action: "drop ACK0", next: "-" }
+          ], note: "💡 提示：ACK 丢失对发送方而言，与数据包丢失的现象完全一致。", focus: null }
+      },
+      {
+        title: "第 2 步：超时重传，接收方处理重复包",
+        desc: "发送方重传 pkt0（第三行）。接收方处于 Wait 1，收到 seq=0 判定为重复包：丢弃数据但重发 ACK0（第四行回程），解救发送方。",
+        motions: [
+          { id: "p2", label: "pkt0 (Retx)", kind: "data", path: [{x:150,y:324},{x:850,y:368}], delay: 0, duration: 1200, fields: { "Seq": 0 } },
+          { id: "a2", label: "ACK0 (Dup)", kind: "ack", path: [{x:850,y:386},{x:150,y:430}], delay: 1300, duration: 1000, fields: { "ACK": 0 } }
+        ],
+        state: { senderFsm: "wait_call_1", receiverFsm: "wait_1", timerActive: false, timerProgress: 0,
+          logs: [
+            { time: "3.0s", entity: "Sender",   event: "Timeout",               action: "retransmit pkt0", next: "Wait ACK 0" },
+            { time: "4.2s", entity: "Receiver", event: "rcv pkt0 (Duplicate)",  action: "discard data, resend ACK0", next: "Wait 1" },
+            { time: "5.5s", entity: "Sender",   event: "rcv ACK0",              action: "stop_timer", next: "Wait call 1" }
+          ], note: "💡 反直觉特例：接收方收到重复包时必须重发 ACK，否则发送方将永远卡在超时重传的死锁中。", focus: null }
+      }
+    ]
+  },
+  bit_error: {
+    steps: [
+      {
+        title: "第 1 步：pkt0 比特差错，被接收方丢弃",
+        desc: "pkt0 在信道中发生位翻转（红色）。接收方校验和失败：丢弃数据、不交付、不发 ACK。",
+        motions: [
+          { id: "p1", label: "pkt0 (Err)", kind: "nak", path: [{x:150,y:200},{x:850,y:244}], delay: 0, duration: 1200, corrupted: true, fields: { "Seq": 0, "Data": "H#llo", "Checksum": "0x1A (Mismatch!)" } }
+        ],
+        state: { senderFsm: "wait_ack_0", receiverFsm: "wait_0", timerActive: true, timerProgress: 0.8,
+          logs: [
+            { time: "0.0s", entity: "Sender",   event: "rdt_send",             action: "send pkt0", next: "Wait ACK 0" },
+            { time: "1.2s", entity: "Channel",  event: "Bit Error",            action: "corrupt packet", next: "-" },
+            { time: "1.2s", entity: "Receiver", event: "rcv pkt0 (Corrupt)",   action: "discard, no ACK", next: "Wait 0" }
+          ], note: "💡 提示：rdt3.0 中接收方发现校验和错误直接丢弃，依赖发送方超时重传。", focus: { type: "packet", id: "p1" } }
+      },
+      {
+        title: "第 2 步：超时重传并成功接收",
+        desc: "发送方超时重传 pkt0（第二行）；接收方校验正确，交付数据并回复 ACK0（第三行回程）。",
+        motions: [
+          { id: "p2", label: "pkt0 (Retx)", kind: "data", path: [{x:150,y:262},{x:850,y:306}], delay: 0, duration: 1200, fields: { "Seq": 0, "Data": "Hello", "Checksum": "0x1A" } },
+          { id: "a1", label: "ACK0", kind: "ack", path: [{x:850,y:324},{x:150,y:368}], delay: 1300, duration: 1000, fields: { "ACK": 0 } }
+        ],
+        state: { senderFsm: "wait_call_1", receiverFsm: "wait_1", timerActive: false, timerProgress: 0,
+          logs: [
+            { time: "3.0s", entity: "Sender",   event: "Timeout",       action: "retransmit pkt0", next: "Wait ACK 0" },
+            { time: "4.2s", entity: "Receiver", event: "rcv pkt0 (OK)", action: "deliver, send ACK0", next: "Wait 1" },
+            { time: "5.5s", entity: "Sender",   event: "rcv ACK0",      action: "stop_timer", next: "Wait call 1" }
+          ], note: "超时重传机制同样适用于处理比特差错。", focus: null }
+      }
+    ]
+  }
+};
+
+// ==========================================
+// 4. 全局状态 (Global State)
+// ==========================================
+
+let currentScenarioKey = 'normal';
+let steps = scenarios[currentScenarioKey].steps;
+let currentIndex = 0;
+let animToken = 0;
+let isPlaying = false;
+let speed = 1.0;
+let activePacketsCache = [];
+let flightsCache = [];
+
+const svgLayer = document.getElementById('svg-layer');
+const canvas = document.getElementById('canvas-layer');
+const ctx = canvas.getContext('2d');
+const container = document.getElementById('topology-container');
+const btnPlay = document.getElementById('btn-play');
+const btnPrev = document.getElementById('btn-prev');
+const btnNext = document.getElementById('btn-next');
+const btnReset = document.getElementById('btn-reset');
+const btnTheme = document.getElementById('btn-theme');
+const scenarioSelect = document.getElementById('scenario-select');
+const speedSlider = document.getElementById('speed-slider');
+const speedVal = document.getElementById('speed-val');
+const stepTitle = document.getElementById('step-title');
+const stepDesc = document.getElementById('step-desc');
+const stepNote = document.getElementById('step-note');
+const stepProgress = document.getElementById('step-progress');
+const progressFill = document.getElementById('progress-fill');
+const infoPanel = document.getElementById('info-panel');
+const logList = document.getElementById('log-list');
+
+let canvasTransform = { scale: 1, offsetX: 0, offsetY: 0, dpr: 1 };
+
+// ==========================================
+// 5. 主题管理 (Theme Management)
+// ==========================================
+
+function initTheme() {
+  const saved = localStorage.getItem('rdt-fsm-theme');
+  if (saved) applyTheme(saved);
+  else applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  btnTheme.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+  requestAnimationFrame(() => drawCanvas(flightsCache, activePacketsCache));
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  localStorage.setItem('rdt-fsm-theme', next);
+}
+
+// ==========================================
+// 6. SVG 构建 (SVG Construction)
+// ==========================================
+
+function buildSvgTopology() {
+  const ns = 'http://www.w3.org/2000/svg';
+  svgLayer.innerHTML = '';
+  const defs = document.createElementNS(ns, 'defs');
+  defs.innerHTML = `<marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="var(--fsm-arrow)" /></marker>`;
+  svgLayer.appendChild(defs);
+
+  // 信道背景带（不可靠信道）
+  const band = document.createElementNS(ns, 'rect');
+  band.setAttribute('class', 'channel-band');
+  band.setAttribute('x', GEO.SX); band.setAttribute('y', 170);
+  band.setAttribute('width', GEO.RX - GEO.SX); band.setAttribute('height', GEO.LIFE_BOT - 170);
+  svgLayer.appendChild(band);
+  const bandLabel = document.createElementNS(ns, 'text');
+  bandLabel.setAttribute('class', 'band-label');
+  bandLabel.setAttribute('x', 500); bandLabel.setAttribute('y', 186);
+  bandLabel.textContent = '不可靠信道 (Unreliable Channel) — 水平=空间, 垂直=时间';
+  svgLayer.appendChild(bandLabel);
+
+  // 节点盒子
+  NODES.forEach(node => {
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'node');
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', node.x - node.w / 2); rect.setAttribute('y', node.y - node.h / 2);
+    rect.setAttribute('width', node.w); rect.setAttribute('height', node.h);
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', node.x); text.setAttribute('y', node.y);
+    text.textContent = node.name;
+    g.appendChild(rect); g.appendChild(text);
+    svgLayer.appendChild(g);
+  });
+
+  // App → FSM 调用箭头
+  [['sender', 150, 'rdt_send(data) / deliver?'], ['receiver', 850, 'deliver_data(data)']].forEach(([side, x, label]) => {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('class', 'app-arrow');
+    line.setAttribute('x1', x); line.setAttribute('y1', 76);
+    line.setAttribute('x2', x); line.setAttribute('y2', 112);
+    svgLayer.appendChild(line);
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('class', 'app-arrow-label');
+    if (side === 'sender') { t.setAttribute('x', x + 10); t.setAttribute('text-anchor', 'start'); t.textContent = 'rdt_send(data)'; }
+    else { t.setAttribute('x', x - 10); t.setAttribute('text-anchor', 'end'); t.textContent = 'deliver_data(data)'; }
+    t.setAttribute('y', 98);
+    svgLayer.appendChild(t);
+  });
+
+  // 生命线
+  [GEO.SX, GEO.RX].forEach(x => {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('class', 'lifeline');
+    line.setAttribute('x1', x); line.setAttribute('y1', GEO.LIFE_TOP);
+    line.setAttribute('x2', x); line.setAttribute('y2', GEO.LIFE_BOT);
+    svgLayer.appendChild(line);
+  });
+
+  // 定时器
+  const timerG = document.createElementNS(ns, 'g');
+  timerG.innerHTML = `
+    <rect class="timer-container" x="90" y="478" width="120" height="14" />
+    <rect class="timer-fill" id="timer-fill-rect" x="90" y="478" width="0" height="14" />
+    <text class="timer-text" x="150" y="485">Timer (倒计时)</text>`;
+  svgLayer.appendChild(timerG);
+
+  buildFsmGraph();
+}
+
+function buildFsmGraph() {
+  const ns = 'http://www.w3.org/2000/svg';
+
+  const t1 = document.createElementNS(ns, 'text');
+  t1.setAttribute('class', 'fsm-title'); t1.setAttribute('x', 350); t1.setAttribute('y', 530);
+  t1.textContent = '发送方 FSM (Sender)';
+  svgLayer.appendChild(t1);
+  const t2 = document.createElementNS(ns, 'text');
+  t2.setAttribute('class', 'fsm-title'); t2.setAttribute('x', 750); t2.setAttribute('y', 530);
+  t2.textContent = '接收方 FSM (Receiver)';
+  svgLayer.appendChild(t2);
+
+  [...FSM_STATES.sender, ...FSM_STATES.receiver].forEach(state => {
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'fsm-state'); g.setAttribute('data-id', state.id);
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', state.x); c.setAttribute('cy', state.y); c.setAttribute('r', 38);
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', state.x); t.setAttribute('y', state.y);
+    t.textContent = state.label;
+    g.appendChild(c); g.appendChild(t);
+    svgLayer.appendChild(g);
+  });
+
+  const arrows = [
+    { x1: 292, y1: 590, x2: 408, y2: 590, label: 'rdt_send / udt_send, start_timer', ly: 582 },
+    { x1: 415, y1: 615, x2: 285, y2: 695, label: 'rcv ACK0 / stop_timer', ly: 650 },
+    { x1: 292, y1: 720, x2: 408, y2: 720, label: 'rdt_send / udt_send, start_timer', ly: 712 },
+    { x1: 415, y1: 695, x2: 285, y2: 615, label: 'rcv ACK1 / stop_timer', ly: 662 },
+    { x1: 692, y1: 585, x2: 808, y2: 585, label: 'rcv pkt0 / deliver, send ACK0', ly: 577 },
+    { x1: 808, y1: 600, x2: 692, y2: 600, label: 'rcv pkt1 / deliver, send ACK1', ly: 616 }
+  ];
+  arrows.forEach(a => {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('class', 'fsm-arrow');
+    line.setAttribute('x1', a.x1); line.setAttribute('y1', a.y1);
+    line.setAttribute('x2', a.x2); line.setAttribute('y2', a.y2);
+    svgLayer.appendChild(line);
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('class', 'fsm-arrow-label');
+    t.setAttribute('x', (a.x1 + a.x2) / 2); t.setAttribute('y', a.ly);
+    t.textContent = a.label;
+    svgLayer.appendChild(t);
+  });
+
+  const n1 = document.createElementNS(ns, 'text');
+  n1.setAttribute('class', 'fsm-arrow-label'); n1.setAttribute('x', 350); n1.setAttribute('y', 552);
+  n1.textContent = '(自环: Timeout → 重传并重启定时器)';
+  svgLayer.appendChild(n1);
+  const n2 = document.createElementNS(ns, 'text');
+  n2.setAttribute('class', 'fsm-arrow-label'); n2.setAttribute('x', 750); n2.setAttribute('y', 552);
+  n2.textContent = '(自环: 重复/损坏包 → 重发 ACK, 不交付)';
+  svgLayer.appendChild(n2);
+}
+
+function updateSvgStates(state) {
+  document.querySelectorAll('.fsm-state').forEach(el => el.classList.remove('active'));
+  ['senderFsm', 'receiverFsm'].forEach(key => {
+    if (state[key]) {
+      const el = document.querySelector(`.fsm-state[data-id="${state[key]}"]`);
+      if (el) el.classList.add('active');
+    }
+  });
+  const tf = document.getElementById('timer-fill-rect');
+  if (tf) tf.setAttribute('width', state.timerActive ? state.timerProgress * 120 : 0);
+}
+
+// ==========================================
+// 7. 传输记录推导 (Flight Derivation, 幂等)
+// ==========================================
+
+/** 推导前 upToIndex 个步骤产生的全部传输记录（时空图斜线） */
+function computeFlights(upToIndex) {
+  const flights = [];
+  for (let i = 0; i < upToIndex && i < steps.length; i++) {
+    for (const m of steps[i].motions) {
+      flights.push({
+        id: m.id, label: m.label, kind: m.kind,
+        from: m.path[0].x < m.path[1].x ? 'sender' : 'receiver',
+        lost: !!m.lost, corrupted: !!m.corrupted,
+        row: flights.length, fields: m.fields
+      });
+    }
+  }
+  return flights;
+}
+
+function flightGeometry(f) {
+  const y0 = GEO.FLIGHT_Y0 + f.row * GEO.FLIGHT_ROW;
+  const sx = f.from === 'sender' ? GEO.SX : GEO.RX;
+  const ex = f.from === 'sender' ? GEO.RX : GEO.SX;
+  return { sx, sy: y0, ex, ey: y0 + GEO.FLIGHT_DROP };
+}
+
+// ==========================================
+// 8. Canvas 渲染 (Canvas Rendering)
+// ==========================================
+
+function resizeCanvas() {
+  const rect = container.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const scale = Math.min(W / 1000, H / 800);
+  canvasTransform = { scale, offsetX: (W - 1000 * scale) / 2, offsetY: (H - 800 * scale) / 2, dpr };
+  drawCanvas(flightsCache, activePacketsCache);
+}
+
+function drawArrowHead(x, y, angle, color) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(-10, -5); ctx.lineTo(-10, 5);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
+function drawCross(x, y, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7);
+  ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7);
+  ctx.stroke();
+}
+
+function drawCanvas(flights, activePackets) {
+  const { scale, offsetX, offsetY, dpr } = canvasTransform;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(scale, scale);
+
+  // --- 静态传输记录：之字形来回轨迹 ---
+  flights.forEach(f => {
+    const g = flightGeometry(f);
+    const color = f.corrupted ? getCssVar('--pkt-nak') : getCssVar(`--pkt-${f.kind}`);
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+    ctx.setLineDash(f.lost ? [6, 5] : []);
+
+    const endX = f.lost ? (g.sx + g.ex) / 2 : g.ex;
+    const endY = f.lost ? (g.sy + g.ey) / 2 : g.ey;
+
+    ctx.beginPath();
+    ctx.moveTo(g.sx, g.sy);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (f.lost) {
+      drawCross(endX, endY, color);
+    } else {
+      drawArrowHead(endX, endY, Math.atan2(g.ey - g.sy, g.ex - g.sx), color);
+      if (f.corrupted) drawCross(endX, endY, color);
+    }
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(f.label + (f.lost ? ' ✕lost' : ''), (g.sx + endX) / 2, (g.sy + endY) / 2 - 4);
+  });
+
+  // --- 飞行中的数据包 ---
+  activePackets.forEach(p => {
+    let color = getCssVar(`--pkt-${p.kind}`) || '#888';
+    if (p.corrupted) color = getCssVar('--pkt-nak');
+    let alpha = 1;
+    if (p.lost && p.progress > 0.5) alpha = Math.max(0, 1 - (p.progress - 0.5) * 2);
+    ctx.globalAlpha = alpha;
+
+    // 拖尾（从起点到当前位置）
+    ctx.beginPath();
+    ctx.moveTo(p.path[0].x, p.path[0].y);
+    ctx.lineTo(p.x, p.y);
+    ctx.strokeStyle = color + '88'; ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, Math.PI * 2);
+    ctx.fillStyle = color + '44'; ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.label, p.x, p.y);
+
+    if (p.lost && p.progress >= 0.5) drawCross(p.x, p.y, color);
+    if (p.corrupted) { ctx.fillStyle = color; ctx.font = 'bold 10px sans-serif'; ctx.fillText('ERR', p.x, p.y + 26); }
+    ctx.globalAlpha = 1;
+  });
+}
+
+function interpolatePath(path, t) {
+  if (path.length < 2) return path[0] || { x: 0, y: 0 };
+  const dx = path[1].x - path[0].x, dy = path[1].y - path[0].y;
+  return { x: path[0].x + dx * t, y: path[0].y + dy * t };
+}
+
+// ==========================================
+// 9. renderState (幂等渲染)
+// ==========================================
+
+function getStateByIndex(index) {
+  return index === 0
+    ? { senderFsm: 'wait_call_0', receiverFsm: 'wait_0', timerActive: false, timerProgress: 0, logs: [], note: '', focus: null }
+    : steps[index - 1].state;
+}
+
+function renderState(state) {
+  updateSvgStates(state);
+  flightsCache = computeFlights(currentIndex);
+  activePacketsCache = [];
+  drawCanvas(flightsCache, []);
+  updateInfoPanel(state.focus);
+  updateLogPanel(state.logs);
+  if (state.note) { stepNote.innerHTML = state.note; stepNote.style.display = 'block'; }
+  else stepNote.style.display = 'none';
+}
+
+function updateLogPanel(logs) {
+  if (!logs || logs.length === 0) {
+    logList.innerHTML = '<div style="color: var(--text-disabled); text-align: center; padding: 20px 0;">暂无日志</div>';
+    return;
+  }
+  logList.innerHTML = logs.map(log => `
+    <div class="log-item">
+      <span class="log-entity ${log.entity.toLowerCase()}">[${log.time}] ${log.entity}</span>
+      <strong>${log.event}</strong><br>
+      <span style="color: var(--text-disabled);">→ ${log.action} (Next: ${log.next})</span>
+    </div>`).join('');
+  logList.scrollTop = logList.scrollHeight;
+}
+
+function updateInfoPanel(focus) {
+  if (!focus || focus.type !== 'packet') {
+    infoPanel.innerHTML = `<p style="color: var(--text-disabled);">点击飞行中/已完成的数据包查看协议字段。</p>`;
+    return;
+  }
+  let pkt = null;
+  for (let i = 0; i < steps.length; i++) {
+    pkt = steps[i].motions.find(m => m.id === focus.id);
+    if (pkt) break;
+  }
+  if (pkt) {
+    let rows = '';
+    if (pkt.fields) for (const [k, v] of Object.entries(pkt.fields)) rows += `<tr><td style="font-weight:bold;">${k}</td><td>${v}</td></tr>`;
+    infoPanel.innerHTML = `<h4 style="margin-bottom:8px;">${pkt.label}</h4><table>${rows}</table>`;
+  }
+}
+
+// ==========================================
+// 10. 动画层 (Animation Layer) — 已修复间隙提前终止 Bug
+// ==========================================
+
+function playMotions(step, token, baseFlightCount) {
+  return new Promise(resolve => {
+    if (!step.motions || step.motions.length === 0) { resolve(); return; }
+    const startTime = performance.now();
+    // 结束判定只看总时长，避免 motion 之间的 delay 间隙被误判为"全部完成"
+    const maxDuration = Math.max(...step.motions.map(m => m.delay + m.duration));
+    const staticFlights = computeFlights(currentIndex - 1);
+
+    function frame(now) {
+      if (animToken !== token) { resolve(); return; }
+      const elapsed = (now - startTime) * speed;
+      const active = [];
+
+      step.motions.forEach((m, order) => {
+        const t = (elapsed - m.delay) / m.duration;
+        if (t >= 0 && t <= 1) {
+          const pos = interpolatePath(m.path, t);
+          active.push({ ...m, x: pos.x, y: pos.y, progress: t, row: baseFlightCount + order });
+        }
+      });
+
+      activePacketsCache = active;
+      drawCanvas(staticFlights, active);
+
+      if (elapsed >= maxDuration) {
+        activePacketsCache = [];
+        drawCanvas(staticFlights, []);
+        resolve();
+      } else {
+        requestAnimationFrame(frame);
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// ==========================================
+// 11. goToStep (唯一跳转入口)
+// ==========================================
+
+async function goToStep(targetIndex, { animate = true } = {}) {
+  if (targetIndex < 0 || targetIndex > steps.length) return;
+
+  if (!animate || targetIndex < currentIndex) {
+    if (isPlaying) pause();
+    currentIndex = targetIndex;
+    renderState(getStateByIndex(targetIndex));
+    updateControls(); updateStepInfo();
+    return;
+  }
+
+  const token = ++animToken;
+  for (let i = currentIndex; i < targetIndex; i++) {
+    currentIndex = i + 1;
+    updateControls(); updateStepInfo();
+
+    const baseFlightCount = computeFlights(i).length;
+    await playMotions(steps[i], token, baseFlightCount);
+    if (animToken !== token) return;
+
+    renderState(steps[i].state);
+    if (animToken !== token) return;
+
+    if (i < targetIndex - 1) {
+      await delay(600 / speed);
+      if (animToken !== token) return;
+    }
+  }
+}
+
+// ==========================================
+// 12. 播放控制 (Playback Controller)
+// ==========================================
+
+async function play() {
+  if (currentIndex >= steps.length) { reset(); await delay(100); }
+  isPlaying = true;
+  updateControls();
+  await goToStep(steps.length, { animate: true });
+  if (isPlaying) { isPlaying = false; updateControls(); }
+}
+function pause() {
+  isPlaying = false;
+  animToken++;
+  renderState(getStateByIndex(currentIndex));
+  updateControls();
+}
+function stepForward() { if (isPlaying) pause(); if (currentIndex < steps.length) goToStep(currentIndex + 1, { animate: true }); }
+function stepBackward() { if (isPlaying) pause(); if (currentIndex > 0) goToStep(currentIndex - 1, { animate: false }); }
+function reset() { if (isPlaying) pause(); goToStep(0, { animate: false }); }
+
+// ==========================================
+// 13. UI 同步 (UI Sync)
+// ==========================================
+
+function updateControls() {
+  btnPrev.disabled = currentIndex <= 0;
+  btnNext.disabled = currentIndex >= steps.length;
+  btnPlay.textContent = isPlaying ? '⏸ 暂停' : '▶ 播放';
+}
+function updateStepInfo() {
+  if (currentIndex === 0) {
+    stepTitle.textContent = '初始状态';
+    stepDesc.textContent = '发送方等待上层调用，接收方等待下层数据包。';
+  } else {
+    stepTitle.textContent = steps[currentIndex - 1].title;
+    stepDesc.textContent = steps[currentIndex - 1].desc;
+  }
+  stepProgress.textContent = `${currentIndex} / ${steps.length}`;
+  progressFill.style.width = `${(currentIndex / steps.length) * 100}%`;
+}
+
+// ==========================================
+// 14. 交互绑定 (Interaction Binding)
+// ==========================================
+
+function bindInteractions() {
+  btnPlay.addEventListener('click', () => isPlaying ? pause() : play());
+  btnPrev.addEventListener('click', stepBackward);
+  btnNext.addEventListener('click', stepForward);
+  btnReset.addEventListener('click', reset);
+  btnTheme.addEventListener('click', toggleTheme);
+
+  scenarioSelect.addEventListener('change', e => {
+    currentScenarioKey = e.target.value;
+    steps = scenarios[currentScenarioKey].steps;
+    reset();
+  });
+
+  speedSlider.addEventListener('input', e => {
+    speed = parseFloat(e.target.value);
+    speedVal.textContent = speed.toFixed(2) + '×';
+  });
+
+  container.addEventListener('click', e => {
+    const rect = container.getBoundingClientRect();
+    const { scale, offsetX, offsetY } = canvasTransform;
+    const lx = (e.clientX - rect.left - offsetX) / scale;
+    const ly = (e.clientY - rect.top - offsetY) / scale;
+
+    // 优先命中飞行中的包
+    let hit = activePacketsCache.find(p => dist(lx, ly, p.x, p.y) < 25);
+    if (hit) { updateInfoPanel({ type: 'packet', id: hit.id }); return; }
+
+    // 其次命中已完成的传输记录（斜线中点附近）
+    for (const f of flightsCache) {
+      const g = flightGeometry(f);
+      const mx = (g.sx + (f.lost ? (g.sx + g.ex) / 2 : g.ex)) / 2;
+      const my = (g.sy + (f.lost ? (g.sy + g.ey) / 2 : g.ey)) / 2;
+      if (dist(lx, ly, mx, my) < 22) { updateInfoPanel({ type: 'packet', id: f.id }); return; }
+    }
+    updateInfoPanel(null);
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+}
+
+// ==========================================
+// 15. 快捷键 (Shortcuts)
+// ==========================================
+
+function flashButton(action) {
+  let id = '';
+  if (action === play || action === pause) id = 'btn-play';
+  else if (action === stepForward) id = 'btn-next';
+  else if (action === stepBackward) id = 'btn-prev';
+  else if (action === reset) id = 'btn-reset';
+  else if (action === toggleTheme) id = 'btn-theme';
+  if (id) {
+    const b = document.getElementById(id);
+    b.classList.add('flash');
+    setTimeout(() => b.classList.remove('flash'), 300);
+  }
+}
+
+function bindShortcuts() {
+  document.addEventListener('keydown', e => {
+    const tag = e.target.tagName.toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable) return;
+    let action = null;
+    if (e.code === 'Space') { e.preventDefault(); action = isPlaying ? pause : play; }
+    else if (e.code === 'ArrowRight' || e.key.toLowerCase() === 's') action = stepForward;
+    else if (e.code === 'ArrowLeft' || e.key.toLowerCase() === 'a') action = stepBackward;
+    else if (e.key.toLowerCase() === 'r') action = reset;
+    else if (e.key.toLowerCase() === 't') action = toggleTheme;
+    if (action) { action(); flashButton(action); }
+  });
+}
+
+// ==========================================
+// 16. 初始化 (Initialization)
+// ==========================================
+
+function init() {
+  initTheme();
+  buildSvgTopology();
+  resizeCanvas();
+  bindInteractions();
+  bindShortcuts();
+  renderState(getStateByIndex(0));
+  updateControls();
+  updateStepInfo();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
