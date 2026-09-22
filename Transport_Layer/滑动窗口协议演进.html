@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>计算机网络实验：滑动窗口协议演进演示</title>
+<style>
+  /* =========================================
+     1. CSS 变量与主题管理
+     ========================================= */
+  :root {
+    --bg: #f8fafc;
+    --bg-secondary: #ffffff;
+    --text: #0f172a;
+    --text-secondary: #475569;
+    --node-bg: #ffffff;
+    --node-border: #cbd5e1;
+    --link: #94a3b8;
+    --link-active: #3b82f6;
+    --pkt-data: #10b981;
+    --pkt-ack: #3b82f6;
+    --pkt-error: #ef4444;
+    --pkt-wait: #f59e0b;
+    --focus-ring: #8b5cf6;
+    --btn-bg: #e2e8f0;
+    --btn-hover: #cbd5e1;
+    --btn-text: #0f172a;
+    --progress-bg: #e2e8f0;
+    --progress-fill: #3b82f6;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  }
+
+  [data-theme="dark"] {
+    --bg: #0f172a;
+    --bg-secondary: #1e293b;
+    --text: #f8fafc;
+    --text-secondary: #94a3b8;
+    --node-bg: #1e293b;
+    --node-border: #334155;
+    --link: #475569;
+    --link-active: #60a5fa;
+    --pkt-data: #34d399;
+    --pkt-ack: #60a5fa;
+    --pkt-error: #f87171;
+    --pkt-wait: #fbbf24;
+    --focus-ring: #a78bfa;
+    --btn-bg: #334155;
+    --btn-hover: #475569;
+    --btn-text: #f8fafc;
+    --progress-bg: #334155;
+    --progress-fill: #60a5fa;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  }
+
+  /* =========================================
+     2. 全局样式与布局
+     ========================================= */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 24px;
+  }
+
+  @media (max-width: 1024px) {
+    .container { grid-template-columns: 1fr; }
+  }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  h1 { font-size: 24px; font-weight: 700; }
+
+  /* =========================================
+     3. 组件样式
+     ========================================= */
+  .panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--node-border);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+  }
+
+  .topology-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 2 / 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--node-border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  #topology-svg, #topology-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+
+  #topology-canvas { pointer-events: auto; }
+  #topology-svg { pointer-events: none; }
+  .node { pointer-events: auto; cursor: pointer; }
+
+  button, select {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 16px;
+    border: 1px solid var(--node-border);
+    border-radius: 6px;
+    background: var(--btn-bg);
+    color: var(--btn-text);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+
+  button:hover:not(:disabled) { background: var(--btn-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  
+  button.primary {
+    background: var(--progress-fill);
+    color: white;
+    border-color: var(--progress-fill);
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .speed-control { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+  /* 协议演进指示器样式 */
+  .protocol-evolution {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding: 16px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--node-border);
+    position: relative;
+  }
+
+  .phase {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 2;
+    flex: 1;
+  }
+
+  .phase-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--progress-bg);
+    border: 3px solid var(--node-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--text-secondary);
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+
+  .phase.completed .phase-dot {
+    background: var(--pkt-data);
+    border-color: var(--pkt-data);
+    color: white;
+  }
+  .phase.completed .phase-dot::after {
+    content: '✓';
+    font-weight: bold;
+  }
+
+  .phase.active .phase-dot {
+    background: var(--progress-fill);
+    border-color: var(--progress-fill);
+    color: white;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  }
+  [data-theme="dark"] .phase.active .phase-dot {
+    box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.2);
+  }
+
+  .phase-info { display: flex; flex-direction: column; }
+  .phase-name { font-weight: 600; font-size: 14px; color: var(--text); }
+  .phase-desc { font-size: 12px; color: var(--text-secondary); }
+
+  .phase-line {
+    flex: 1;
+    height: 3px;
+    background: var(--progress-bg);
+    margin: 0 -10px;
+    z-index: 1;
+    transition: background 0.3s;
+  }
+  .phase-line.completed { background: var(--pkt-data); }
+
+  .progress-container { margin-top: 16px; }
+  .progress-info { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; font-weight: 600; }
+  .progress-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: var(--progress-bg);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--progress-fill);
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+  .step-desc { font-size: 15px; margin-bottom: 8px; color: var(--text); }
+  .step-note { font-size: 13px; color: var(--text-secondary); font-style: italic; border-left: 3px solid var(--progress-fill); padding-left: 10px; }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--node-border);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-color { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); }
+
+  .info-panel h3 { font-size: 16px; margin-bottom: 10px; color: var(--progress-fill); }
+  .info-panel p { font-size: 14px; margin-bottom: 6px; }
+  .info-panel strong { color: var(--text); }
+  .info-panel ul { margin: 8px 0; padding-left: 20px; font-size: 13px; }
+  .info-panel li { margin-bottom: 4px; }
+
+  .shortcuts-hint {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 12px;
+  }
+  kbd {
+    background: var(--btn-bg);
+    border: 1px solid var(--node-border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: monospace;
+    font-size: 11px;
+    box-shadow: 0 1px 0 var(--node-border);
+  }
+
+  .simplification-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg);
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--node-border);
+    margin-top: 20px;
+  }
+  .simplification-note h4 { font-size: 14px; margin-bottom: 8px; color: var(--pkt-wait); }
+  .simplification-note ul { padding-left: 20px; }
+
+  .theme-btn {
+    background: transparent;
+    border: 1px solid var(--node-border);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+  }
+
+  @keyframes flash-anim {
+    0% { box-shadow: 0 0 0 0 var(--focus-ring); }
+    50% { box-shadow: 0 0 0 4px var(--focus-ring); }
+    100% { box-shadow: 0 0 0 0 var(--focus-ring); }
+  }
+  .flash { animation: flash-anim 0.3s ease; }
+
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- 左侧：拓扑与控制区 -->
+  <div class="main-col">
+    <header>
+      <h1>🌐 计算机网络：滑动窗口协议演进</h1>
+      <button id="btn-theme" class="theme-btn" data-action="toggleTheme" title="切换主题 (T)">🌙 深色</button>
+    </header>
+
+    <div class="topology-container" id="topology-container">
+      <svg id="topology-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <canvas id="topology-canvas"></canvas>
+    </div>
+
+    <div class="panel" style="margin-top: 20px;">
+      <!-- 协议演进指示器 -->
+      <div class="protocol-evolution">
+        <div class="phase" id="phase-0">
+          <div class="phase-dot"></div>
+          <div class="phase-info">
+            <div class="phase-name">Stop-and-Wait</div>
+            <div class="phase-desc">停止等待协议</div>
+          </div>
+        </div>
+        <div class="phase-line" id="line-0"></div>
+        <div class="phase" id="phase-1">
+          <div class="phase-dot"></div>
+          <div class="phase-info">
+            <div class="phase-name">Go-Back-N</div>
+            <div class="phase-desc">回退 N 步协议</div>
+          </div>
+        </div>
+        <div class="phase-line" id="line-1"></div>
+        <div class="phase" id="phase-2">
+          <div class="phase-dot"></div>
+          <div class="phase-info">
+            <div class="phase-name">Selective Repeat</div>
+            <div class="phase-desc">选择性重传协议</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="btn-prev" data-action="stepBackward" title="上一步 (A/←)">◀ 上一步</button>
+        <button id="btn-play" class="primary" data-action="togglePlay" title="播放/暂停 (Space)">▶ 播放</button>
+        <button id="btn-next" data-action="stepForward" title="单步执行 (S/→)">单步 ▶</button>
+        <button id="btn-reset" data-action="reset" title="重置 (R)">↺ 重置</button>
+        <div class="speed-control">
+          <label for="speed-select">速度:</label>
+          <select id="speed-select">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+            <option value="3">3x</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="progress-container">
+        <div class="progress-info">
+          <span id="step-title">初始状态</span>
+          <span id="step-progress">0 / 10</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="progress-bar" class="progress-bar-fill"></div>
+        </div>
+        <p id="step-desc" class="step-desc">点击播放或单步执行开始实验演示。</p>
+        <p id="step-note" class="step-note"></p>
+      </div>
+
+      <div class="shortcuts-hint">
+        <strong>快捷键:</strong>
+        <span><kbd>Space</kbd> 播放/暂停</span>
+        <span><kbd>←</kbd>/<kbd>A</kbd> 上一步</span>
+        <span><kbd>→</kbd>/<kbd>S</kbd> 下一步</span>
+        <span><kbd>R</kbd> 重置</span>
+        <span><kbd>T</kbd> 主题</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧：信息面板与图例 -->
+  <div class="side-col">
+    <div class="panel info-panel" id="info-panel">
+      <h3>ℹ️ 详细信息</h3>
+      <div id="info-content">
+        <p>点击拓扑图中的节点或数据包查看详细信息。</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="font-size: 16px; margin-bottom: 12px;">🎨 语义色图例</h3>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-color" style="background: var(--pkt-data)"></div> 数据包 (Data)</div>
+        <div class="legend-item"><div class="legend-color" style="background: var(--pkt-ack)"></div> 确认 (ACK)</div>
+        <div class="legend-item"><div class="legend-color" style="background: var(--pkt-error)"></div> 丢失/丢弃 (Error)</div>
+        <div class="legend-item"><div class="legend-color" style="background: var(--pkt-wait)"></div> 缓存/等待 (Wait)</div>
+      </div>
+    </div>
+
+    <div class="simplification-note">
+      <h4>⚠️ 教学简化说明</h4>
+      <ul>
+        <li>本演示省略了底层物理层/数据链路层的帧封装与校验和(CRC)计算。</li>
+        <li>假设链路传输延迟固定，未模拟真实的网络抖动与排队延迟。</li>
+        <li>GBN 与 SR 的接收窗口大小简化为与发送窗口一致，未涉及复杂的序号回绕(Seq Wrapping)问题。</li>
+        <li>ACK 均假设为独立且可靠到达，未模拟 ACK 丢失导致的超时重传(实际中可通过重复 ACK 或定时器处理)。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * 计算机网络实验：滑动窗口协议演进演示
+ * 架构：UI -> Controller -> State -> Animation -> Render
+ */
+
+// ==========================================
+// 1. 常量与工具
+// ==========================================
+const LOGIC_W = 1000;
+const LOGIC_H = 500;
+
+const SHORTCUTS = {
+  'Space': { action: 'togglePlay', desc: '播放/暂停' },
+  'ArrowRight': { action: 'stepForward', desc: '下一步' },
+  'KeyS': { action: 'stepForward', desc: '下一步' },
+  'ArrowLeft': { action: 'stepBackward', desc: '上一步' },
+  'KeyA': { action: 'stepBackward', desc: '上一步' },
+  'KeyR': { action: 'reset', desc: '重置' },
+  'KeyT': { action: 'toggleTheme', desc: '切换主题' }
+};
+
+// 协议阶段定义
+const PROTOCOL_PHASES = [
+  { id: 'phase-0', name: 'Stop-and-Wait', range: [0, 3] },
+  { id: 'phase-1', name: 'Go-Back-N (GBN)', range: [4, 6] },
+  { id: 'phase-2', name: 'Selective Repeat (SR)', range: [7, 9] }
+];
+
+function getCSSColor(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ==========================================
+// 2. 拓扑与坐标系统定义
+// ==========================================
+const NODES = {
+  sender: { name: '发送方 (Sender)', role: '数据发送端', desc: '维护发送窗口，处理超时重传。', x: 150, y: 250, w: 140, h: 120 },
+  receiver: { name: '接收方 (Receiver)', role: '数据接收端', desc: '维护接收窗口，处理乱序与确认。', x: 850, y: 250, w: 140, h: 120 }
+};
+
+const LINKS = {
+  forward: { from: 'sender', to: 'receiver', y: 200, label: '数据链路 (正向)' },
+  backward: { from: 'receiver', to: 'sender', y: 300, label: '确认链路 (反向)' }
+};
+
+// 接收方缓存区 Y 坐标 (对应 seq 0~7)
+const RECV_Y = [80, 110, 140, 170, 200, 230, 260, 290];
+
+// 路径生成辅助函数，确保动画终点与 state 快照坐标严格一致
+const pathToRecv = (seq) => [
+  {x: 220, y: 200}, 
+  {x: 780, y: 200}, 
+  {x: 850, y: RECV_Y[seq]}
+];
+const pathToSender = () => [
+  {x: 780, y: 300}, 
+  {x: 220, y: 300}
+];
+const pathDrop = () => [
+  {x: 220, y: 200}, 
+  {x: 500, y: 200} // 停在链路中间
+];
+const pathDiscard = () => [
+  {x: 220, y: 200}, 
+  {x: 780, y: 200},
+  {x: 780, y: 220} // 停在接收方边缘
+];
+
+// ==========================================
+// 3. Steps 数据 (10步完整实验)
+// ==========================================
+const initialState = {
+  packets: [],
+  nodeStates: { sender: '空闲', receiver: '空闲' },
+  activeLinks: [],
+  focus: null,
+  note: '欢迎使用计算机网络滑动窗口协议演示。本实验将对比 Stop-and-Wait、Go-Back-N 和 Selective Repeat 三种协议的演进过程。'
+};
+
+const steps = [
+  {
+    title: "[Stop-and-Wait] 1. 发送 pkt 0",
+    desc: "发送方发送 pkt 0，并启动超时定时器。",
+    motions: [
+      { id: 'p0', label: 'pkt 0', kind: 'data', path: pathToRecv(0), delay: 0, duration: 1000, fields: {seq: 0} }
+    ],
+    state: {
+      packets: [{id:'p0', x:850, y:RECV_Y[0], label:'pkt 0', color:'--pkt-data', fields:{seq:0}}],
+      nodeStates: {sender:'等待 ACK 0', receiver:'收到 pkt 0'},
+      activeLinks: ['forward'],
+      focus: {type:'packet', id:'p0'},
+      note: '停止等待协议：发送一个包后必须等待确认才能发送下一个。'
+    }
+  },
+  {
+    title: "[Stop-and-Wait] 2. 收到 ACK 0，发送 pkt 1",
+    desc: "接收方回 ACK 0，发送方收到后滑动窗口，发送 pkt 1。",
+    motions: [
+      { id: 'a0', label: 'ACK 0', kind: 'ack', path: pathToSender(), delay: 0, duration: 800, fields: {ack: 0} },
+      { id: 'p1', label: 'pkt 1', kind: 'data', path: pathToRecv(1), delay: 800, duration: 1000, fields: {seq: 1} }
+    ],
+    state: {
+      packets: [{id:'p1', x:850, y:RECV_Y[1], label:'pkt 1', color:'--pkt-data', fields:{seq:1}}],
+      nodeStates: {sender:'等待 ACK 1', receiver:'收到 pkt 1'},
+      activeLinks: ['forward', 'backward'],
+      focus: {type:'packet', id:'p1'},
+      note: '发送方收到 ACK 0 后，停止定时器并发送下一个包。'
+    }
+  },
+  {
+    title: "[Stop-and-Wait] 3. pkt 1 丢失与超时重传",
+    desc: "pkt 1 在链路中丢失。发送方超时定时器触发，重传 pkt 1。",
+    motions: [
+      { id: 'p1_lost', label: 'pkt 1', kind: 'error', path: pathDrop(), delay: 0, duration: 800, fields: {seq: 1, status: 'lost'} },
+      { id: 'p1_retry', label: 'pkt 1 (重传)', kind: 'data', path: pathToRecv(1), delay: 1200, duration: 1000, fields: {seq: 1, note: 'timeout retry'} }
+    ],
+    state: {
+      packets: [
+        {id:'p1_retry', x:850, y:RECV_Y[1], label:'pkt 1', color:'--pkt-data', fields:{seq:1, note:'retry'}},
+        {id:'p1_lost', x:500, y:200, label:'pkt 1', color:'--pkt-error', status:'lost', fields:{seq:1, status:'lost'}}
+      ],
+      nodeStates: {sender:'等待 ACK 1', receiver:'收到 pkt 1'},
+      activeLinks: ['forward'],
+      focus: {type:'packet', id:'p1_retry'},
+      note: '停止等待效率较低，信道利用率受限于 RTT。超时后只能重传当前包。'
+    }
+  },
+  {
+    title: "[Stop-and-Wait] 4. 收到 ACK 1",
+    desc: "接收方回 ACK 1，发送方收到确认，停止等待。",
+    motions: [
+      { id: 'a1', label: 'ACK 1', kind: 'ack', path: pathToSender(), delay: 0, duration: 800, fields: {ack: 1} }
+    ],
+    state: {
+      packets: [], // 交付给上层，清空缓冲区
+      nodeStates: {sender:'空闲', receiver:'空闲'},
+      activeLinks: ['backward'],
+      focus: null,
+      note: '停止等待演示结束。接下来演示 Go-Back-N (GBN) 协议。'
+    }
+  },
+  {
+    title: "[Go-Back-N] 5. 连续发送与丢包",
+    desc: "GBN 允许连续发送窗口(N=4)内的包。pkt 0 成功，pkt 1 丢失，pkt 2, 3 到达但因乱序被丢弃。",
+    motions: [
+      { id: 'p0', label: 'pkt 0', kind: 'data', path: pathToRecv(0), delay: 0, duration: 800, fields: {seq:0} },
+      { id: 'p1', label: 'pkt 1', kind: 'error', path: pathDrop(), delay: 200, duration: 800, fields: {seq:1, status:'lost'} },
+      { id: 'p2', label: 'pkt 2', kind: 'error', path: pathDiscard(), delay: 400, duration: 800, fields: {seq:2, status:'dropped'} },
+      { id: 'p3', label: 'pkt 3', kind: 'error', path: pathDiscard(), delay: 600, duration: 800, fields: {seq:3, status:'dropped'} }
+    ],
+    state: {
+      packets: [
+        {id:'p0', x:850, y:RECV_Y[0], label:'pkt 0', color:'--pkt-data', fields:{seq:0}},
+        {id:'p1', x:500, y:200, label:'pkt 1', color:'--pkt-error', status:'lost', fields:{seq:1, status:'lost'}},
+        {id:'p2', x:780, y:220, label:'pkt 2', color:'--pkt-error', status:'dropped', fields:{seq:2, status:'dropped'}},
+        {id:'p3', x:780, y:240, label:'pkt 3', color:'--pkt-error', status:'dropped', fields:{seq:3, status:'dropped'}}
+      ],
+      nodeStates: {sender:'等待 ACK 1', receiver:'期望 seq 1 (丢弃 2,3)'},
+      activeLinks: ['forward'],
+      focus: null,
+      note: 'GBN 接收方只缓存按序到达的包，乱序包直接丢弃，并重复发送上一个按序包的 ACK。'
+    }
+  },
+  {
+    title: "[Go-Back-N] 6. 重复 ACK 与超时重传",
+    desc: "接收方重复回 ACK 0。发送方超时，重传所有已发送但未确认的包：pkt 1, 2, 3。",
+    motions: [
+      { id: 'a0_rep', label: 'ACK 0', kind: 'ack', path: pathToSender(), delay: 0, duration: 600, fields: {ack:0, note:'repeat'} },
+      { id: 'p1_r', label: 'pkt 1', kind: 'data', path: pathToRecv(1), delay: 800, duration: 800, fields: {seq:1, note:'retry'} },
+      { id: 'p2_r', label: 'pkt 2', kind: 'data', path: pathToRecv(2), delay: 1000, duration: 800, fields: {seq:2, note:'retry'} },
+      { id: 'p3_r', label: 'pkt 3', kind: 'data', path: pathToRecv(3), delay: 1200, duration: 800, fields: {seq:3, note:'retry'} }
+    ],
+    state: {
+      packets: [
+        {id:'p0', x:850, y:RECV_Y[0], label:'pkt 0', color:'--pkt-data', fields:{seq:0}},
+        {id:'p1_r', x:850, y:RECV_Y[1], label:'pkt 1', color:'--pkt-data', fields:{seq:1}},
+        {id:'p2_r', x:850, y:RECV_Y[2], label:'pkt 2', color:'--pkt-data', fields:{seq:2}},
+        {id:'p3_r', x:850, y:RECV_Y[3], label:'pkt 3', color:'--pkt-data', fields:{seq:3}}
+      ],
+      nodeStates: {sender:'等待 ACK 3', receiver:'收到 1,2,3'},
+      activeLinks: ['forward', 'backward'],
+      focus: null,
+      note: 'GBN 的缺点：即使只丢了一个包，也要重传后续所有已发送的包，浪费带宽。'
+    }
+  },
+  {
+    title: "[Go-Back-N] 7. 收到确认，窗口滑动",
+    desc: "接收方回 ACK 1, 2, 3。发送方收到后，窗口滑动到 4。",
+    motions: [
+      { id: 'a1', label: 'ACK 1', kind: 'ack', path: pathToSender(), delay: 0, duration: 600, fields: {ack:1} },
+      { id: 'a2', label: 'ACK 2', kind: 'ack', path: pathToSender(), delay: 200, duration: 600, fields: {ack:2} },
+      { id: 'a3', label: 'ACK 3', kind: 'ack', path: pathToSender(), delay: 400, duration: 600, fields: {ack:3} }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {sender:'准备发送 4~7', receiver:'空闲'},
+      activeLinks: ['backward'],
+      focus: null,
+      note: '发送窗口滑动，可以发送新的数据包。接下来演示选择性重传 (SR)。'
+    }
+  },
+  {
+    title: "[Selective Repeat] 8. 发送新窗口与缓存乱序包",
+    desc: "发送 pkt 4~7。pkt 5 丢失。SR 接收方缓存乱序的 pkt 6, 7，并分别回 ACK 6, ACK 7。",
+    motions: [
+      { id: 'p4', label: 'pkt 4', kind: 'data', path: pathToRecv(4), delay: 0, duration: 800, fields: {seq:4} },
+      { id: 'p5', label: 'pkt 5', kind: 'error', path: pathDrop(), delay: 200, duration: 800, fields: {seq:5, status:'lost'} },
+      { id: 'p6', label: 'pkt 6', kind: 'wait', path: pathToRecv(6), delay: 400, duration: 800, fields: {seq:6, status:'buffered'} },
+      { id: 'p7', label: 'pkt 7', kind: 'wait', path: pathToRecv(7), delay: 600, duration: 800, fields: {seq:7, status:'buffered'} },
+      { id: 'a4', label: 'ACK 4', kind: 'ack', path: pathToSender(), delay: 1000, duration: 600, fields: {ack:4} },
+      { id: 'a6', label: 'ACK 6', kind: 'ack', path: pathToSender(), delay: 1200, duration: 600, fields: {ack:6} },
+      { id: 'a7', label: 'ACK 7', kind: 'ack', path: pathToSender(), delay: 1400, duration: 600, fields: {ack:7} }
+    ],
+    state: {
+      packets: [
+        {id:'p4', x:850, y:RECV_Y[4], label:'pkt 4', color:'--pkt-data', fields:{seq:4}},
+        {id:'p5', x:500, y:200, label:'pkt 5', color:'--pkt-error', status:'lost', fields:{seq:5, status:'lost'}},
+        {id:'p6', x:850, y:RECV_Y[6], label:'pkt 6', color:'--pkt-wait', fields:{seq:6, note:'buffered'}},
+        {id:'p7', x:850, y:RECV_Y[7], label:'pkt 7', color:'--pkt-wait', fields:{seq:7, note:'buffered'}}
+      ],
+      nodeStates: {sender:'等待 ACK 5', receiver:'缓存 6, 7 (期望 5)'},
+      activeLinks: ['forward', 'backward'],
+      focus: null,
+      note: 'SR 接收方缓存乱序包，并独立发送 ACK，避免了 GBN 的无效重传。'
+    }
+  },
+  {
+    title: "[Selective Repeat] 9. 仅重传丢失的 pkt 5",
+    desc: "pkt 5 超时，发送方仅重传 pkt 5。",
+    motions: [
+      { id: 'p5_r', label: 'pkt 5 (重传)', kind: 'data', path: pathToRecv(5), delay: 0, duration: 800, fields: {seq:5, note:'retry'} }
+    ],
+    state: {
+      packets: [
+        {id:'p4', x:850, y:RECV_Y[4], label:'pkt 4', color:'--pkt-data', fields:{seq:4}},
+        {id:'p5_r', x:850, y:RECV_Y[5], label:'pkt 5', color:'--pkt-data', fields:{seq:5}},
+        {id:'p6', x:850, y:RECV_Y[6], label:'pkt 6', color:'--pkt-data', fields:{seq:6}},
+        {id:'p7', x:850, y:RECV_Y[7], label:'pkt 7', color:'--pkt-data', fields:{seq:7}}
+      ],
+      nodeStates: {sender:'等待 ACK 7', receiver:'按序交付 5,6,7'},
+      activeLinks: ['forward'],
+      focus: null,
+      note: 'SR 仅重传丢失的包，大大节省了网络带宽。'
+    }
+  },
+  {
+    title: "[Selective Repeat] 10. 按序交付，窗口滑动",
+    desc: "接收方收到 pkt 5，按序交付 5, 6, 7，回 ACK 7。发送方窗口滑动。",
+    motions: [
+      { id: 'a7_final', label: 'ACK 7', kind: 'ack', path: pathToSender(), delay: 0, duration: 800, fields: {ack:7, note:'cumulative'} }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {sender:'完成', receiver:'完成'},
+      activeLinks: ['backward'],
+      focus: null,
+      note: '实验结束。三种协议对比：Stop-and-Wait 效率最低，GBN 重传开销大，SR 效率最高但接收方实现复杂。'
+    }
+  }
+];
+
+// ==========================================
+// 4. 全局状态
+// ==========================================
+let currentIndex = -1;
+let animToken = 0;
+let isPlaying = false;
+let isResetting = false;
+let playbackSpeed = 1;
+let activeMotions = [];
+let currentState = initialState;
+
+const $ = id => document.getElementById(id);
+const canvas = $('topology-canvas');
+const ctx = canvas.getContext('2d');
+const svgContainer = $('topology-container');
+
+// ==========================================
+// 5. 主题管理
+// ==========================================
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+  updateThemeButton(theme);
+  renderFrame(currentState, activeMotions);
+}
+
+function updateThemeButton(theme) {
+  const btn = $('btn-theme');
+  btn.textContent = theme === 'dark' ? '☀️ 浅色' : '🌙 深色';
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+}
+
+// ==========================================
+// 6. SVG 构建
+// ==========================================
+function buildSVG() {
+  const svg = $('topology-svg');
+  svg.setAttribute('viewBox', `0 0 ${LOGIC_W} ${LOGIC_H}`);
+  
+  Object.entries(LINKS).forEach(([id, link]) => {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('id', `link-${id}`);
+    line.setAttribute('x1', NODES[link.from].x + (link.from === 'sender' ? NODES[link.from].w/2 : -NODES[link.from].w/2));
+    line.setAttribute('y1', link.y);
+    line.setAttribute('x2', NODES[link.to].x + (link.to === 'sender' ? NODES[link.to].w/2 : -NODES[link.to].w/2));
+    line.setAttribute('y2', link.y);
+    line.setAttribute('stroke', 'var(--link)');
+    line.setAttribute('stroke-width', '4');
+    line.setAttribute('stroke-linecap', 'round');
+    line.style.transition = 'all 0.3s';
+    svg.appendChild(line);
+  });
+  
+  Object.entries(NODES).forEach(([id, node]) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('id', `node-${id}`);
+    g.setAttribute('class', 'node');
+    g.setAttribute('transform', `translate(${node.x - node.w/2}, ${node.y - node.h/2})`);
+    g.onclick = () => {
+      currentState.focus = {type:'node', id};
+      updateInfoPanel(currentState.focus, currentState);
+    };
+    
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('width', node.w);
+    rect.setAttribute('height', node.h);
+    rect.setAttribute('rx', '12');
+    rect.setAttribute('fill', 'var(--node-bg)');
+    rect.setAttribute('stroke', 'var(--node-border)');
+    rect.setAttribute('stroke-width', '2');
+    g.appendChild(rect);
+    
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', node.w / 2);
+    text.setAttribute('y', node.h / 2 - 10);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('dominant-baseline', 'middle');
+    text.setAttribute('fill', 'var(--text)');
+    text.setAttribute('font-size', '16');
+    text.setAttribute('font-weight', 'bold');
+    text.textContent = node.name;
+    g.appendChild(text);
+    
+    const stateText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    stateText.setAttribute('id', `node-state-${id}`);
+    stateText.setAttribute('x', node.w / 2);
+    stateText.setAttribute('y', node.h / 2 + 15);
+    stateText.setAttribute('text-anchor', 'middle');
+    stateText.setAttribute('fill', 'var(--text-secondary)');
+    stateText.setAttribute('font-size', '13');
+    g.appendChild(stateText);
+    
+    svg.appendChild(g);
+  });
+}
+
+// ==========================================
+// 7. Canvas 渲染与动画层
+// ==========================================
+function resizeCanvas() {
+  const rect = svgContainer.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = rect.height + 'px';
+  
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  const scaleX = rect.width / LOGIC_W;
+  const scaleY = rect.height / LOGIC_H;
+  ctx.scale(scaleX, scaleY);
+  
+  renderFrame(currentState, activeMotions);
+}
+
+function interpolatePath(path, t) {
+  t = Math.max(0, Math.min(1, t));
+  if (path.length === 1) return path[0];
+  
+  let totalLen = 0;
+  const segLens = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const dx = path[i+1].x - path[i].x;
+    const dy = path[i+1].y - path[i].y;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    segLens.push(len);
+    totalLen += len;
+  }
+  
+  let targetLen = t * totalLen;
+  let currentLen = 0;
+  for (let i = 0; i < segLens.length; i++) {
+    if (currentLen + segLens[i] >= targetLen) {
+      const segT = (targetLen - currentLen) / segLens[i];
+      return {
+        x: path[i].x + (path[i+1].x - path[i].x) * segT,
+        y: path[i].y + (path[i+1].y - path[i].y) * segT
+      };
+    }
+    currentLen += segLens[i];
+  }
+  return path[path.length - 1];
+}
+
+function drawPacket(x, y, label, colorVar, status) {
+  const color = getCSSColor(colorVar);
+  ctx.fillStyle = color;
+  
+  const w = 70, h = 32, r = 6;
+  ctx.beginPath();
+  ctx.moveTo(x - w/2 + r, y - h/2);
+  ctx.lineTo(x + w/2 - r, y - h/2);
+  ctx.quadraticCurveTo(x + w/2, y - h/2, x + w/2, y - h/2 + r);
+  ctx.lineTo(x + w/2, y + h/2 - r);
+  ctx.quadraticCurveTo(x + w/2, y + h/2, x + w/2 - r, y + h/2);
+  ctx.lineTo(x - w/2 + r, y + h/2);
+  ctx.quadraticCurveTo(x - w/2, y + h/2, x - w/2, y + h/2 - r);
+  ctx.lineTo(x - w/2, y - h/2 + r);
+  ctx.quadraticCurveTo(x - w/2, y - h/2, x - w/2 + r, y - h/2);
+  ctx.closePath();
+  ctx.fill();
+  
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  if (status === 'lost' || status === 'dropped') {
+    ctx.fillText('✖', x, y);
+  } else {
+    ctx.fillText(label, x, y);
+  }
+}
+
+function renderFrame(state, motions) {
+  ctx.clearRect(0, 0, LOGIC_W, LOGIC_H);
+  
+  state.packets.forEach(pkt => {
+    const isAnimating = motions.some(m => m.id === pkt.id);
+    if (!isAnimating) {
+      drawPacket(pkt.x, pkt.y, pkt.label, pkt.color, pkt.status);
+    }
+  });
+  
+  motions.forEach(m => {
+    const pos = interpolatePath(m.path, m.t);
+    let colorVar = '--pkt-data';
+    if (m.kind === 'ack') colorVar = '--pkt-ack';
+    if (m.kind === 'error') colorVar = '--pkt-error';
+    if (m.kind === 'wait') colorVar = '--pkt-wait';
+    drawPacket(pos.x, pos.y, m.label, colorVar, m.fields?.status);
+  });
+}
+
+function playMotions(step, targetState, token) {
+  return new Promise(resolve => {
+    const startTime = performance.now();
+    const motions = step.motions;
+    
+    let maxDuration = 0;
+    motions.forEach(m => {
+      const end = m.delay + m.duration;
+      if (end > maxDuration) maxDuration = end;
+    });
+    
+    function frame(now) {
+      if (animToken !== token) { resolve(); return; }
+      
+      const elapsed = (now - startTime) * playbackSpeed;
+      let allDone = true;
+      
+      const active = [];
+      motions.forEach(m => {
+        const localTime = elapsed - m.delay;
+        if (localTime < 0) {
+          allDone = false;
+        } else if (localTime < m.duration) {
+          const t = localTime / m.duration;
+          active.push({ ...m, t });
+          allDone = false;
+        } else {
+          active.push({ ...m, t: 1 });
+        }
+      });
+      
+      activeMotions = active;
+      renderFrame(targetState, activeMotions);
+      
+      if (allDone || elapsed >= maxDuration) {
+        activeMotions = [];
+        resolve();
+      } else {
+        requestAnimationFrame(frame);
+      }
+    }
+    
+    if (maxDuration === 0) {
+      resolve();
+    } else {
+      requestAnimationFrame(frame);
+    }
+  });
+}
+
+// ==========================================
+// 8. 状态渲染与 UI 同步
+// ==========================================
+function updateSVGState(state) {
+  Object.keys(LINKS).forEach(id => {
+    const line = $(`link-${id}`);
+    if (state.activeLinks.includes(id)) {
+      line.setAttribute('stroke', 'var(--link-active)');
+      line.setAttribute('stroke-width', '6');
+    } else {
+      line.setAttribute('stroke', 'var(--link)');
+      line.setAttribute('stroke-width', '4');
+    }
+  });
+  
+  Object.keys(NODES).forEach(id => {
+    const stateText = $(`node-state-${id}`);
+    if (stateText) {
+      stateText.textContent = state.nodeStates[id] || '';
+    }
+  });
+}
+
+function updateInfoPanel(focus, state) {
+  const content = $('info-content');
+  if (!focus) {
+    content.innerHTML = '<p>点击拓扑图中的节点或数据包查看详细信息。</p>';
+    return;
+  }
+  
+  if (focus.type === 'node') {
+    const node = NODES[focus.id];
+    const nodeState = state.nodeStates[focus.id] || 'Unknown';
+    content.innerHTML = `
+      <h3>🖥️ 节点: ${node.name}</h3>
+      <p><strong>角色:</strong> ${node.role}</p>
+      <p><strong>当前状态:</strong> ${nodeState}</p>
+      <p><strong>说明:</strong> ${node.desc}</p>
+    `;
+  } else if (focus.type === 'packet') {
+    let pkt = state.packets.find(p => p.id === focus.id);
+    if (!pkt && currentIndex >= 0) {
+      pkt = steps[currentIndex].motions.find(m => m.id === focus.id);
+    }
+    
+    if (pkt) {
+      let fieldsHtml = '';
+      if (pkt.fields) {
+        fieldsHtml = '<ul>' + Object.entries(pkt.fields).map(([k, v]) => `<li><strong>${k}:</strong> ${v}</li>`).join('') + '</ul>';
+      }
+      let kindText = '数据包';
+      if (pkt.kind === 'ack') kindText = '确认 (ACK)';
+      if (pkt.kind === 'error') kindText = '丢失/错误';
+      if (pkt.kind === 'wait') kindText = '缓存/等待';
+      
+      content.innerHTML = `
+        <h3>📦 数据包: ${pkt.label}</h3>
+        <p><strong>类型:</strong> ${kindText}</p>
+        ${fieldsHtml}
+      `;
+    } else {
+      content.innerHTML = `<h3>📦 数据包: ${focus.id}</h3><p style="color: var(--text-secondary);">该数据包已交付给上层应用或已被丢弃。</p>`;
+    }
+  }
+}
+
+function updateProtocolEvolution() {
+  const currentPhaseIndex = PROTOCOL_PHASES.findIndex(p => currentIndex >= p.range[0] && currentIndex <= p.range[1]);
+  
+  PROTOCOL_PHASES.forEach((phase, index) => {
+    const el = $(phase.id);
+    const line = $(`line-${index}`);
+    
+    if (!el) return;
+    
+    el.classList.remove('completed', 'active');
+    if (line) line.classList.remove('completed');
+    
+    if (index < currentPhaseIndex) {
+      el.classList.add('completed');
+      if (line) line.classList.add('completed');
+    } else if (index === currentPhaseIndex) {
+      el.classList.add('active');
+      if (index > 0) {
+        const prevLine = $(`line-${index - 1}`);
+        if (prevLine) prevLine.classList.add('completed');
+      }
+    }
+  });
+}
+
+function updateStepInfo() {
+  updateProtocolEvolution();
+  
+  if (currentIndex === -1) {
+    $('step-title').textContent = '初始状态';
+    $('step-progress').textContent = `0 / ${steps.length}`;
+    $('progress-bar').style.width = '0%';
+    $('step-desc').textContent = '点击播放或单步执行开始实验演示。';
+    $('step-note').textContent = initialState.note;
+  } else {
+    const step = steps[currentIndex];
+    $('step-title').textContent = step.title;
+    $('step-progress').textContent = `第 ${currentIndex + 1} / ${steps.length} 步`;
+    $('progress-bar').style.width = `${((currentIndex + 1) / steps.length) * 100}%`;
+    $('step-desc').textContent = step.desc;
+    $('step-note').textContent = step.state.note || '';
+  }
+}
+
+function updateControls() {
+  $('btn-prev').disabled = currentIndex <= -1 || isResetting;
+  $('btn-next').disabled = currentIndex >= steps.length - 1 || isResetting;
+  $('btn-play').innerHTML = isPlaying ? '⏸ 暂停' : '▶ 播放';
+  $('btn-play').disabled = (currentIndex >= steps.length - 1 && !isPlaying) || isResetting;
+}
+
+function renderState(state, options) {
+  currentState = state;
+  updateSVGState(state);
+  updateInfoPanel(state.focus, state);
+  renderFrame(state, activeMotions);
+}
+
+// ==========================================
+// 9. 核心控制器 (goToStep)
+// ==========================================
+async function goToStep(index, { animate = true } = {}) {
+  if (index < -1 || index >= steps.length) return;
+  if (index === currentIndex) return;
+  
+  const token = ++animToken;
+  const isForward = index > currentIndex;
+  currentIndex = index;
+  
+  updateControls();
+  updateStepInfo();
+  
+  const targetState = index === -1 ? initialState : steps[index].state;
+  
+  if (animate && isForward && index !== -1 && steps[index].motions?.length > 0) {
+    activeMotions = [];
+    await playMotions(steps[index], targetState, token);
+    if (animToken !== token) return; 
+    activeMotions = [];
+  }
+  
+  renderState(targetState, { animate: false });
+}
+
+// ==========================================
+// 10. 播放控制
+// ==========================================
+async function playLoop() {
+  isPlaying = true;
+  updateControls();
+  
+  while (isPlaying && currentIndex < steps.length - 1) {
+    await goToStep(currentIndex + 1, { animate: true });
+    if (!isPlaying) break;
+    await delay(500 / playbackSpeed);
+  }
+  
+  isPlaying = false;
+  updateControls();
+}
+
+function togglePlay() {
+  if (isPlaying) {
+    pause();
+  } else {
+    if (currentIndex >= steps.length - 1) {
+      reset().then(() => playLoop());
+    } else {
+      playLoop();
+    }
+  }
+}
+
+function pause() {
+  isPlaying = false;
+  animToken++; 
+  const targetState = currentIndex === -1 ? initialState : steps[currentIndex].state;
+  activeMotions = [];
+  renderState(targetState, { animate: false });
+  updateControls();
+}
+
+function stepForward() {
+  if (isPlaying) pause();
+  if (currentIndex < steps.length - 1) {
+    goToStep(currentIndex + 1, { animate: true });
+  }
+}
+
+function stepBackward() {
+  if (isResetting) return;
+  if (isPlaying) pause();
+  if (currentIndex > -1) {
+    goToStep(currentIndex - 1, { animate: false });
+  }
+}
+
+async function reset() {
+  if (isResetting) return;
+  isResetting = true;
+  if (isPlaying) pause();
+  updateControls();
+  
+  animToken++;
+  activeMotions = [];
+  currentIndex = -1;
+  currentState = initialState;
+  
+  updateControls();
+  updateStepInfo();
+  renderState(initialState, { animate: false });
+  
+  await delay(300);
+  isResetting = false;
+  updateControls();
+}
+
+// ==========================================
+// 11. 交互绑定
+// ==========================================
+function bindUI() {
+  $('btn-prev').onclick = stepBackward;
+  $('btn-play').onclick = togglePlay;
+  $('btn-next').onclick = stepForward;
+  $('btn-reset').onclick = reset;
+  $('btn-theme').onclick = toggleTheme;
+  
+  $('speed-select').onchange = (e) => {
+    playbackSpeed = parseFloat(e.target.value);
+  };
+  
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * LOGIC_W;
+    const y = (e.clientY - rect.top) / rect.height * LOGIC_H;
+    
+    let hit = null;
+    for (const pkt of currentState.packets) {
+      if (Math.abs(x - pkt.x) < 35 && Math.abs(y - pkt.y) < 20) {
+        hit = { type: 'packet', id: pkt.id };
+        break;
+      }
+    }
+    if (!hit) {
+      for (const m of activeMotions) {
+        const pos = interpolatePath(m.path, m.t);
+        if (Math.abs(x - pos.x) < 35 && Math.abs(y - pos.y) < 20) {
+          hit = { type: 'packet', id: m.id };
+          break;
+        }
+      }
+    }
+    
+    if (hit) {
+      currentState.focus = hit;
+      updateInfoPanel(currentState.focus, currentState);
+    }
+  });
+}
+
+function flashButton(actionName) {
+  const btn = document.querySelector(`[data-action="${actionName}"]`);
+  if (btn) {
+    btn.classList.add('flash');
+    setTimeout(() => btn.classList.remove('flash'), 300);
+  }
+}
+
+function bindShortcuts() {
+  window.addEventListener('keydown', (e) => {
+    const tag = e.target.tagName.toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable) return;
+    
+    const code = e.code;
+    if (SHORTCUTS[code]) {
+      e.preventDefault();
+      const actionName = SHORTCUTS[code].action;
+      window[actionName]();
+      flashButton(actionName);
+    }
+  });
+}
+
+// ==========================================
+// 12. 初始化
+// ==========================================
+function init() {
+  const savedTheme = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(savedTheme || (prefersDark ? 'dark' : 'light'));
+  
+  buildSVG();
+  resizeCanvas();
+  bindUI();
+  bindShortcuts();
+  
+  updateControls();
+  updateStepInfo();
+  renderState(initialState, { animate: false });
+  
+  window.addEventListener('resize', resizeCanvas);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+</body>
+</html>
