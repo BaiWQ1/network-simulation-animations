@@ -1,0 +1,2565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>计算机网络实验：Go-Back-N 与 Selective-Repeat 窗口与缓冲区演示</title>
+<style>
+/* ==========================================================
+   UI 层：CSS 变量统一管理主题颜色
+   ========================================================== */
+:root {
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --muted: #5f6368;
+  --panel-bg: #f8f9fa;
+  --border: #dee2e6;
+
+  --node-bg: #e9ecef;
+  --node-stroke: #495057;
+  --link-stroke: #adb5bd;
+  --link-active: #0d6efd;
+
+  --pkt-data: #0d6efd;
+  --pkt-ack: #198754;
+  --pkt-lost: #dc3545;
+  --pkt-text: #ffffff;
+
+  --win-send: rgba(40, 167, 69, 0.18);
+  --win-send-border: #28a745;
+  --win-recv: rgba(13, 110, 253, 0.16);
+  --win-recv-border: #0d6efd;
+
+  --buf-bg: #fff3cd;
+  --buf-border: #ffc107;
+
+  --btn-bg: #e9ecef;
+  --btn-text: #212529;
+  --btn-hover: #dee2e6;
+  --btn-active: #ced4da;
+  --btn-disabled: #f8f9fa;
+  --btn-text-disabled: #adb5bd;
+
+  --focus-ring: #0d6efd;
+  --shadow: rgba(0, 0, 0, 0.05);
+  --note-bg: rgba(255, 193, 7, 0.10);
+  --note-border: rgba(255, 193, 7, 0.35);
+  --note-title: #946200;
+}
+
+[data-theme="dark"] {
+  --bg: #121417;
+  --text: #e9ecef;
+  --muted: #adb5bd;
+  --panel-bg: #1e2125;
+  --border: #343a40;
+
+  --node-bg: #2b3035;
+  --node-stroke: #adb5bd;
+  --link-stroke: #495057;
+  --link-active: #3d8bfd;
+
+  --pkt-data: #3d8bfd;
+  --pkt-ack: #479f76;
+  --pkt-lost: #e35d6a;
+  --pkt-text: #0b0d0f;
+
+  --win-send: rgba(72, 187, 120, 0.24);
+  --win-send-border: #5cb85c;
+  --win-recv: rgba(61, 139, 253, 0.24);
+  --win-recv-border: #5bc0de;
+
+  --buf-bg: #3a3000;
+  --buf-border: #ffc107;
+
+  --btn-bg: #2b3035;
+  --btn-text: #e9ecef;
+  --btn-hover: #343a40;
+  --btn-active: #495057;
+  --btn-disabled: #1e2125;
+  --btn-text-disabled: #6c757d;
+
+  --focus-ring: #3d8bfd;
+  --shadow: rgba(0, 0, 0, 0.30);
+  --note-bg: rgba(255, 193, 7, 0.06);
+  --note-border: rgba(255, 193, 7, 0.22);
+  --note-title: #ffd766;
+}
+
+/* ==========================================================
+   基础布局
+   ========================================================== */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  padding: 20px;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.app {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+
+h1 {
+  font-size: 1.45rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.main-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+}
+
+@media (max-width: 1000px) {
+  .main-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+/* ==========================================================
+   场景区：SVG + Canvas 双层叠加
+   ========================================================== */
+.scene-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 500;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel-bg);
+  transition: opacity 0.28s ease;
+}
+
+#topology,
+#packet-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#packet-canvas {
+  cursor: pointer;
+}
+
+.link {
+  stroke: var(--link-stroke);
+  stroke-width: 5;
+  stroke-linecap: round;
+  transition: stroke 0.25s ease;
+}
+
+.link.active {
+  stroke: var(--link-active);
+  stroke-width: 7;
+  filter: drop-shadow(0 0 5px var(--link-active));
+}
+
+.node-bg {
+  fill: var(--node-bg);
+  stroke: var(--node-stroke);
+  stroke-width: 2;
+}
+
+.node-name {
+  fill: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.node-state {
+  fill: var(--muted);
+  font-size: 12px;
+  text-anchor: middle;
+}
+
+/* ==========================================================
+   控制面板
+   ========================================================== */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+button,
+select {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease,
+    box-shadow 0.18s ease, opacity 0.18s ease;
+  outline: none;
+}
+
+button:hover:not(:disabled),
+select:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+
+button:active:not(:disabled) {
+  background: var(--btn-active);
+}
+
+button:disabled,
+select:disabled {
+  background: var(--btn-disabled);
+  color: var(--btn-text-disabled);
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.flash {
+  animation: shortcut-flash 0.32s ease-out;
+}
+
+@keyframes shortcut-flash {
+  0% {
+    box-shadow: 0 0 0 3px var(--focus-ring);
+    background: var(--btn-active);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+.speed-label {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.progress-wrap {
+  margin-top: 14px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--link-active);
+  transition: width 0.28s ease;
+}
+
+.step-progress {
+  margin-top: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.step-info {
+  margin-top: 14px;
+  min-height: 118px;
+}
+
+.step-info h3 {
+  color: var(--link-active);
+  font-size: 1.12rem;
+  margin-bottom: 6px;
+}
+
+.step-desc {
+  font-size: 0.96rem;
+}
+
+.step-note {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ==========================================================
+   右侧信息面板、图例、快捷键、简化说明
+   ========================================================== */
+.sidebar-section + .sidebar-section {
+  margin-top: 18px;
+}
+
+.sidebar-section h3 {
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+#info-panel {
+  display: none;
+}
+
+#info-panel.visible {
+  display: block;
+}
+
+#info-panel h4 {
+  font-size: 0.98rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+#info-content ul {
+  list-style: none;
+}
+
+#info-content li {
+  font-size: 0.92rem;
+  margin-bottom: 6px;
+}
+
+#info-content strong {
+  color: var(--link-active);
+  margin-right: 4px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+  font-size: 0.92rem;
+}
+
+.legend-color {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.legend-color.data {
+  background: var(--pkt-data);
+}
+.legend-color.ack {
+  background: var(--pkt-ack);
+}
+.legend-color.lost {
+  background: var(--pkt-lost);
+}
+.legend-color.win-send {
+  background: var(--win-send);
+  border: 2px solid var(--win-send-border);
+}
+.legend-color.win-recv {
+  background: var(--win-recv);
+  border: 2px solid var(--win-recv-border);
+}
+.legend-color.buf {
+  background: var(--buf-bg);
+  border: 2px solid var(--buf-border);
+}
+
+.shortcuts p {
+  font-size: 0.9rem;
+  margin-bottom: 7px;
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.note-box {
+  margin-top: 18px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
+  font-size: 0.9rem;
+}
+
+.note-box h4 {
+  color: var(--note-title);
+  margin-bottom: 6px;
+}
+
+.note-box ul {
+  padding-left: 20px;
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Go-Back-N 与 Selective-Repeat：发送窗口、接收窗口与发送缓冲区演示</h1>
+    <div class="header-actions">
+      <label for="protocol-select" class="speed-label">协议：</label>
+      <select id="protocol-select" aria-label="选择协议">
+        <option value="gbn" selected>Go-Back-N（GBN）</option>
+        <option value="sr">Selective-Repeat（SR）</option>
+      </select>
+      <button id="theme-toggle" type="button" title="切换主题（T）">🌙 深色</button>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <main>
+      <section class="panel">
+        <div class="scene-container" id="scene-container">
+          <!-- SVG 层：拓扑、节点、链路 -->
+          <svg id="topology" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet" aria-label="网络拓扑"></svg>
+          <!-- Canvas 层：数据包、窗口、缓冲区 -->
+          <canvas id="packet-canvas" aria-label="数据包动画"></canvas>
+        </div>
+
+        <div class="controls">
+          <button id="btn-reset" type="button" title="重置（R）">⟲ 重置</button>
+          <button id="btn-prev" type="button" title="上一步（A / ←）">◀ 上一步</button>
+          <button id="btn-play" type="button" title="播放 / 暂停（Space）">▶ 播放</button>
+          <button id="btn-next" type="button" title="单步执行（S / →）">单步执行 ▶</button>
+
+          <label for="speed-select" class="speed-label">速度：</label>
+          <select id="speed-select" aria-label="播放速度">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+          </select>
+        </div>
+
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+          <div id="step-progress" class="step-progress">第 0 / 9 步</div>
+        </div>
+
+        <div class="step-info">
+          <h3 id="step-title">初始状态</h3>
+          <p id="step-desc" class="step-desc">选择协议后，点击“播放”或“单步执行”。</p>
+          <p id="step-note" class="step-note"></p>
+        </div>
+      </section>
+
+      <section class="panel note-box">
+        <h4>教学简化说明</h4>
+        <ul>
+          <li>序列号空间简化为 <strong>0～7</strong>，未完整演示序列号回绕与模运算。</li>
+          <li>ACK 含义约定为：<strong>ACK n 表示序号 n 已按序正确接收，期望下一个分组为 n + 1</strong>。</li>
+          <li>GBN 接收窗口固定为 <strong>1</strong>；SR 接收窗口简化为 <strong>4</strong>。</li>
+          <li>定时器被简化：GBN 表现为发送窗口 base 分组超时后重传全部未确认分组；SR 表现为每个未确认分组独立超时，仅重传对应分组。</li>
+          <li>RTT、拥塞控制、校验和、链路差错等细节未纳入本演示。</li>
+        </ul>
+      </section>
+    </main>
+
+    <aside class="panel">
+      <section id="info-panel" class="sidebar-section">
+        <h4 id="info-title">详细信息</h4>
+        <div id="info-content"></div>
+      </section>
+
+      <section class="sidebar-section">
+        <h3>图例</h3>
+        <div class="legend-item"><span class="legend-color data"></span> 数据分组 DATA</div>
+        <div class="legend-item"><span class="legend-color ack"></span> 确认分组 ACK</div>
+        <div class="legend-item"><span class="legend-color lost"></span> 丢失分组 LOST</div>
+        <div class="legend-item"><span class="legend-color win-send"></span> 发送窗口</div>
+        <div class="legend-item"><span class="legend-color win-recv"></span> 接收窗口</div>
+        <div class="legend-item"><span class="legend-color buf"></span> 缓冲区分组</div>
+      </section>
+
+      <section class="sidebar-section shortcuts">
+        <h3>快捷键</h3>
+        <p><kbd>Space</kbd> 播放 / 暂停</p>
+        <p><kbd>S</kbd> 或 <kbd>→</kbd> 单步执行（下一步）</p>
+        <p><kbd>A</kbd> 或 <kbd>←</kbd> 上一步</p>
+        <p><kbd>R</kbd> 重置</p>
+        <p><kbd>T</kbd> 切换主题</p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ==========================================================
+   五层架构说明（代码注释）
+   ----------------------------------------------------------
+   1. UI 层：HTML + CSS 变量，负责标题、控制面板、信息面板、图例。
+   2. 控制器：PlaybackController 逻辑，包括播放、暂停、单步、上一步、重置、速度。
+   3. 状态层：initialState + steps[]。每个 step.state 是该步骤结束时刻的完整快照，
+      可幂等渲染，不依赖上一步中间状态。
+   4. 动画层：motions[] 描述步骤内子动画；统一 Ticker 使用 requestAnimationFrame。
+   5. 渲染层：SVG 绘制拓扑、节点、链路；Canvas 绘制数据包、窗口、缓冲区。
+      二者共用 1000 × 500 逻辑坐标系。
+   ========================================================== */
+
+/* ==========================================================
+   1. 常量与工具
+   ========================================================== */
+
+const LOGICAL_WIDTH = 1000;
+const LOGICAL_HEIGHT = 500;
+
+const SEQ_COUNT = 8;
+const SEQ_SLOT_W = 36;
+const SEQ_SLOT_H = 30;
+
+const SENDER_ROW = {
+  startX: 55,
+  titleY: 284,
+  metaY: 300,
+  slotY: 310,
+  bufferY: 346
+};
+
+const RECEIVER_ROW = {
+  startX: 560,
+  titleY: 394,
+  metaY: 410,
+  slotY: 420,
+  bufferY: 456
+};
+
+/**
+ * 快捷键映射。
+ * key: KeyboardEvent.key
+ * value: 控制函数名
+ */
+const SHORTCUTS = {
+  " ": "togglePlay",
+  "s": "stepForward",
+  "S": "stepForward",
+  "ArrowRight": "stepForward",
+  "a": "stepBackward",
+  "A": "stepBackward",
+  "ArrowLeft": "stepBackward",
+  "r": "reset",
+  "R": "reset",
+  "t": "toggleTheme",
+  "T": "toggleTheme"
+};
+
+const SHORTCUT_BUTTON_MAP = {
+  " ": "btn-play",
+  "s": "btn-next",
+  "S": "btn-next",
+  "ArrowRight": "btn-next",
+  "a": "btn-prev",
+  "A": "btn-prev",
+  "ArrowLeft": "btn-prev",
+  "r": "btn-reset",
+  "R": "btn-reset",
+  "t": "theme-toggle",
+  "T": "theme-toggle"
+};
+
+const COLOR_VARS = [
+  "--bg",
+  "--text",
+  "--muted",
+  "--border",
+  "--panel-bg",
+  "--node-bg",
+  "--node-stroke",
+  "--link-stroke",
+  "--link-active",
+  "--pkt-data",
+  "--pkt-ack",
+  "--pkt-lost",
+  "--pkt-text",
+  "--win-send",
+  "--win-send-border",
+  "--win-recv",
+  "--win-recv-border",
+  "--buf-bg",
+  "--buf-border"
+];
+
+const colorCache = Object.create(null);
+
+/**
+ * 读取 CSS 变量。
+ * @param {string} name CSS 变量名，例如 "--pkt-data"
+ * @returns {string}
+ */
+function getCssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/**
+ * 刷新 Canvas 颜色缓存。
+ * Canvas 颜色仍然来自 CSS 变量，不是硬编码。
+ */
+function refreshColorCache() {
+  for (const name of COLOR_VARS) {
+    colorCache[name] = getCssVar(name);
+  }
+}
+
+/**
+ * 从缓存获取颜色。
+ * @param {string} name CSS 变量名
+ * @returns {string}
+ */
+function getColor(name) {
+  return colorCache[name] || getCssVar(name);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+/**
+ * 深拷贝纯数据对象。
+ * steps 中只包含可序列化数据，因此 JSON 克隆足够。
+ */
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function safeLocalStorageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (err) {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (err) {
+    /* 忽略 file:// 或隐私模式下的 localStorage 异常 */
+  }
+}
+
+/**
+ * 绘制圆角矩形路径。
+ */
+function roundRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+/* ==========================================================
+   2. 拓扑定义
+   ========================================================== */
+
+const NODES = [
+  {
+    id: "sender",
+    name: "Sender",
+    role: "发送方",
+    x: 70,
+    y: 105,
+    w: 125,
+    h: 92,
+    desc: "维护发送窗口、发送缓冲区和重传定时器。"
+  },
+  {
+    id: "receiver",
+    name: "Receiver",
+    role: "接收方",
+    x: 805,
+    y: 105,
+    w: 125,
+    h: 92,
+    desc: "维护接收窗口。GBN 不缓存乱序分组；SR 可缓存乱序分组。"
+  }
+];
+
+const LINKS = [
+  {
+    id: "link1",
+    from: "sender",
+    to: "receiver",
+    y: 151
+  }
+];
+
+/* ==========================================================
+   3. steps 数据
+   ----------------------------------------------------------
+   协议约定（教学演示）：
+   - ACK n 表示序号 n 已按序正确接收，期望 n + 1。
+   - 发送窗口 size = 4。
+   - GBN 接收窗口 size = 1。
+   - SR 接收窗口 size = 4（简化）。
+   ========================================================== */
+
+/**
+ * 生成初始状态。
+ * @param {"gbn"|"sr"} protocol
+ * @returns {object}
+ */
+function getInitialState(protocol) {
+  const isGBN = protocol === "gbn";
+  return {
+    packets: [],
+    nodeStates: {
+      sender: "就绪",
+      receiver: isGBN ? "期望 0" : "期望 0"
+    },
+    activeLinks: [],
+    senderWindow: { base: 0, size: 4 },
+    receiverWindow: { base: 0, size: isGBN ? 1 : 4 },
+    senderBuffer: [],
+    receiverBuffer: [],
+    focus: null,
+    note: isGBN
+      ? "GBN：发送窗口 N=4；接收窗口=1。发送缓冲区保存所有已发送但未被累计确认的分组。"
+      : "SR：发送窗口 N=4；接收窗口=4（简化）。接收方可缓存乱序分组，发送方可只重传丢失分组。"
+  };
+}
+
+/* -------------------- Go-Back-N 步骤 -------------------- */
+
+const stepsGBN = [
+  {
+    title: "第 1 步：发送分组 0、1、2",
+    desc: "发送方窗口初始为 [0, 1, 2, 3]。发送方连续发送分组 0、1、2。此时这些分组进入发送缓冲区。",
+    motions: [
+      {
+        id: "p0",
+        label: "Pkt 0",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 128 }, { x: 790, y: 128 }],
+        fields: { "类型": "DATA", "序号 seq": 0, "说明": "从发送方发往接收方" }
+      },
+      {
+        id: "p1",
+        label: "Pkt 1",
+        kind: "data",
+        delay: 260,
+        duration: 1100,
+        path: [{ x: 205, y: 158 }, { x: 790, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "说明": "从发送方发往接收方" }
+      },
+      {
+        id: "p2",
+        label: "Pkt 2",
+        kind: "data",
+        delay: 520,
+        duration: 1100,
+        path: [{ x: 205, y: 188 }, { x: 790, y: 188 }],
+        fields: { "类型": "DATA", "序号 seq": 2, "说明": "从发送方发往接收方" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p0", label: "Pkt 0", kind: "data", x: 790, y: 128, fields: { "类型": "DATA", "序号 seq": 0 } },
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } }
+      ],
+      nodeStates: {
+        sender: "发送 0,1,2",
+        receiver: "期望 0"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 0, size: 4 },
+      receiverWindow: { base: 0, size: 1 },
+      senderBuffer: [0, 1, 2],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "GBN 发送缓冲区保存已发送但未确认的分组 0、1、2。发送窗口仍从 base=0 开始。"
+    }
+  },
+  {
+    title: "第 2 步：接收方交付分组 0，返回 ACK 0",
+    desc: "接收方按序收到分组 0，交付上层，并返回 ACK 0。发送方收到 ACK 0 后，发送窗口向前滑动，分组 0 从发送缓冲区移除。",
+    motions: [
+      {
+        id: "a0",
+        label: "ACK 0",
+        kind: "ack",
+        delay: 150,
+        duration: 1000,
+        path: [{ x: 790, y: 128 }, { x: 205, y: 128 }],
+        fields: { "类型": "ACK", "确认 ack": 0, "含义": "分组 0 已按序接收，期望 1" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } }
+      ],
+      nodeStates: {
+        sender: "base=1",
+        receiver: "交付 0 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 1 },
+      senderBuffer: [1, 2],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "ACK 0 使发送窗口滑动到 [1, 2, 3, 4]。分组 0 已确认，从发送缓冲区移除。"
+    }
+  },
+  {
+    title: "第 3 步：发送窗口允许发送分组 3",
+    desc: "发送窗口滑动后，序号 3 进入窗口。发送方发送分组 3，并将其加入发送缓冲区。",
+    motions: [
+      {
+        id: "p3",
+        label: "Pkt 3",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 218 }, { x: 790, y: 218 }],
+        fields: { "类型": "DATA", "序号 seq": 3, "说明": "窗口滑动后新发送的分组" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } },
+        { id: "p3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3 } }
+      ],
+      nodeStates: {
+        sender: "发送 3",
+        receiver: "期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 1 },
+      senderBuffer: [1, 2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "发送缓冲区变为 [1, 2, 3]。接收方仍然期望分组 1。"
+    }
+  },
+  {
+    title: "第 4 步：分组 1 丢失，分组 2 被接收方丢弃",
+    desc: "分组 1 在链路中丢失。接收方期望分组 1，因此收到分组 2 时判定为乱序。GBN 接收窗口=1，不缓存乱序分组，丢弃分组 2，并重复发送 ACK 0。",
+    motions: [
+      {
+        id: "p1-lost",
+        label: "Pkt 1 ✕",
+        kind: "lost",
+        delay: 0,
+        duration: 900,
+        removeIds: ["p1"],
+        path: [{ x: 790, y: 158 }, { x: 515, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "状态": "丢失", "说明": "分组 1 未到达接收方" }
+      },
+      {
+        id: "ack0-dup",
+        label: "ACK 0",
+        kind: "ack",
+        delay: 1050,
+        duration: 1000,
+        path: [{ x: 790, y: 188 }, { x: 205, y: 188 }],
+        fields: { "类型": "ACK", "确认 ack": 0, "状态": "重复 ACK", "原因": "接收方仍期望 1" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3 } }
+      ],
+      nodeStates: {
+        sender: "重复 ACK0",
+        receiver: "丢弃 2 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 1 },
+      senderBuffer: [1, 2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "receiver" },
+      note: "【GBN 特征】接收窗口=1，乱序分组 2 不进入接收缓冲区，而是被丢弃，并重复 ACK 0。"
+    }
+  },
+  {
+    title: "第 5 步：分组 3 也被丢弃，发送方等待超时",
+    desc: "接收方仍然期望分组 1，因此收到分组 3 后继续丢弃，并重复 ACK 0。GBN 发送方通常不依赖重复 ACK 立即重传，而是等待超时。",
+    motions: [
+      {
+        id: "ack0-dup2",
+        label: "ACK 0",
+        kind: "ack",
+        delay: 200,
+        duration: 1000,
+        path: [{ x: 790, y: 218 }, { x: 205, y: 218 }],
+        fields: { "类型": "ACK", "确认 ack": 0, "状态": "重复 ACK", "原因": "接收方仍期望 1" }
+      }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "等待超时",
+        receiver: "丢弃 3 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 1 },
+      senderBuffer: [1, 2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "发送缓冲区仍为 [1, 2, 3]。发送方等待 base 分组（分组 1）超时。"
+    }
+  },
+  {
+    title: "第 6 步：超时，GBN 重传所有未确认分组",
+    desc: "发送方超时后，重传所有已发送但未被累计确认的分组：1、2、3。这是 Go-Back-N 的典型行为。",
+    motions: [
+      {
+        id: "rp1",
+        label: "Pkt 1",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 158 }, { x: 790, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "状态": "重传" }
+      },
+      {
+        id: "rp2",
+        label: "Pkt 2",
+        kind: "data",
+        delay: 260,
+        duration: 1100,
+        path: [{ x: 205, y: 188 }, { x: 790, y: 188 }],
+        fields: { "类型": "DATA", "序号 seq": 2, "状态": "重传" }
+      },
+      {
+        id: "rp3",
+        label: "Pkt 3",
+        kind: "data",
+        delay: 520,
+        duration: 1100,
+        path: [{ x: 205, y: 218 }, { x: 790, y: 218 }],
+        fields: { "类型": "DATA", "序号 seq": 3, "状态": "重传" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "rp1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1, "状态": "重传" } },
+        { id: "rp2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2, "状态": "重传" } },
+        { id: "rp3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3, "状态": "重传" } }
+      ],
+      nodeStates: {
+        sender: "重传 1,2,3",
+        receiver: "期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 1 },
+      senderBuffer: [1, 2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "【GBN 特征】一次超时导致窗口内所有未确认分组重传，即使其中部分分组此前已经发送过。"
+    }
+  },
+  {
+    title: "第 7 步：接收方按序收到分组 1，返回 ACK 1",
+    desc: "接收方收到重传的分组 1，按序交付上层，并返回 ACK 1。发送方收到 ACK 1 后，发送窗口继续滑动，分组 1 从发送缓冲区移除。",
+    motions: [
+      {
+        id: "a1",
+        label: "ACK 1",
+        kind: "ack",
+        delay: 200,
+        duration: 1000,
+        path: [{ x: 790, y: 158 }, { x: 205, y: 158 }],
+        fields: { "类型": "ACK", "确认 ack": 1, "含义": "分组 1 已按序接收，期望 2" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "rp2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } },
+        { id: "rp3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3 } }
+      ],
+      nodeStates: {
+        sender: "base=2",
+        receiver: "交付 1 期望 2"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 2, size: 4 },
+      receiverWindow: { base: 2, size: 1 },
+      senderBuffer: [2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "receiver" },
+      note: "ACK 1 是累计确认：分组 0、1 均已确认。发送窗口滑动到 [2, 3, 4, 5]。"
+    }
+  },
+  {
+    title: "第 8 步：接收方继续交付分组 2、3",
+    desc: "接收方按序收到分组 2 和分组 3，分别交付上层，并返回 ACK 2、ACK 3。发送方最终收到 ACK 3 后，窗口滑动到 [4, 5, 6, 7]。",
+    motions: [
+      {
+        id: "a2",
+        label: "ACK 2",
+        kind: "ack",
+        delay: 0,
+        duration: 1000,
+        path: [{ x: 790, y: 188 }, { x: 205, y: 188 }],
+        fields: { "类型": "ACK", "确认 ack": 2, "含义": "分组 2 已按序接收，期望 3" }
+      },
+      {
+        id: "a3",
+        label: "ACK 3",
+        kind: "ack",
+        delay: 650,
+        duration: 1000,
+        path: [{ x: 790, y: 218 }, { x: 205, y: 218 }],
+        fields: { "类型": "ACK", "确认 ack": 3, "含义": "分组 3 已按序接收，期望 4" }
+      }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "base=4",
+        receiver: "交付 2,3 期望 4"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 4, size: 4 },
+      receiverWindow: { base: 4, size: 1 },
+      senderBuffer: [],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "所有已发送分组均被确认。发送缓冲区清空，发送窗口滑动到 [4, 5, 6, 7]。"
+    }
+  },
+  {
+    title: "第 9 步：GBN 小结",
+    desc: "GBN 的核心特征是：接收窗口=1，乱序分组被丢弃；发送方超时后重传所有已发送但未确认分组。",
+    motions: [],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "GBN 完成",
+        receiver: "期望 4"
+      },
+      activeLinks: [],
+      senderWindow: { base: 4, size: 4 },
+      receiverWindow: { base: 4, size: 1 },
+      senderBuffer: [],
+      receiverBuffer: [],
+      focus: null,
+      note: "可切换到 SR 协议，对比 SR 接收方缓存乱序分组、发送方只重传丢失分组的行为。"
+    }
+  }
+];
+
+/* -------------------- Selective-Repeat 步骤 -------------------- */
+
+const stepsSR = [
+  {
+    title: "第 1 步：发送分组 0、1、2",
+    desc: "SR 发送方窗口初始为 [0, 1, 2, 3]。发送方连续发送分组 0、1、2。它们进入发送缓冲区。",
+    motions: [
+      {
+        id: "p0",
+        label: "Pkt 0",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 128 }, { x: 790, y: 128 }],
+        fields: { "类型": "DATA", "序号 seq": 0, "说明": "从发送方发往接收方" }
+      },
+      {
+        id: "p1",
+        label: "Pkt 1",
+        kind: "data",
+        delay: 260,
+        duration: 1100,
+        path: [{ x: 205, y: 158 }, { x: 790, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "说明": "从发送方发往接收方" }
+      },
+      {
+        id: "p2",
+        label: "Pkt 2",
+        kind: "data",
+        delay: 520,
+        duration: 1100,
+        path: [{ x: 205, y: 188 }, { x: 790, y: 188 }],
+        fields: { "类型": "DATA", "序号 seq": 2, "说明": "从发送方发往接收方" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p0", label: "Pkt 0", kind: "data", x: 790, y: 128, fields: { "类型": "DATA", "序号 seq": 0 } },
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } }
+      ],
+      nodeStates: {
+        sender: "发送 0,1,2",
+        receiver: "期望 0"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 0, size: 4 },
+      receiverWindow: { base: 0, size: 4 },
+      senderBuffer: [0, 1, 2],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "SR 发送缓冲区保存未确认分组 0、1、2。SR 接收窗口=4，为后续缓存乱序分组留出空间。"
+    }
+  },
+  {
+    title: "第 2 步：接收方交付分组 0，返回 ACK 0",
+    desc: "接收方按序收到分组 0，交付上层，并返回 ACK 0。发送方收到 ACK 0 后，将分组 0 从发送缓冲区移除，发送窗口滑动。",
+    motions: [
+      {
+        id: "a0",
+        label: "ACK 0",
+        kind: "ack",
+        delay: 150,
+        duration: 1000,
+        path: [{ x: 790, y: 128 }, { x: 205, y: 128 }],
+        fields: { "类型": "ACK", "确认 ack": 0, "含义": "分组 0 已按序接收，期望 1" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } }
+      ],
+      nodeStates: {
+        sender: "base=1",
+        receiver: "交付 0 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 4 },
+      senderBuffer: [1, 2],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "SR 中每个分组可被单独确认。ACK 0 后，分组 0 从发送缓冲区移除。"
+    }
+  },
+  {
+    title: "第 3 步：发送窗口允许发送分组 3",
+    desc: "发送窗口滑动后，序号 3 进入窗口。发送方发送分组 3，并将其加入发送缓冲区。",
+    motions: [
+      {
+        id: "p3",
+        label: "Pkt 3",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 218 }, { x: 790, y: 218 }],
+        fields: { "类型": "DATA", "序号 seq": 3, "说明": "窗口滑动后新发送的分组" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1 } },
+        { id: "p2", label: "Pkt 2", kind: "data", x: 790, y: 188, fields: { "类型": "DATA", "序号 seq": 2 } },
+        { id: "p3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3 } }
+      ],
+      nodeStates: {
+        sender: "发送 3",
+        receiver: "期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 4 },
+      senderBuffer: [1, 2, 3],
+      receiverBuffer: [],
+      focus: { type: "node", id: "sender" },
+      note: "发送缓冲区为 [1, 2, 3]。接收窗口 [1, 2, 3, 4] 允许接收方缓存 2、3 等乱序分组。"
+    }
+  },
+  {
+    title: "第 4 步：分组 1 丢失，分组 2 被缓存并返回 ACK 2",
+    desc: "分组 1 丢失。接收方期望分组 1，但分组 2 落在接收窗口 [1, 2, 3, 4] 内。SR 接收方缓存分组 2，并返回 ACK 2。发送方收到 ACK 2 后，仅将分组 2 从发送缓冲区移除。",
+    motions: [
+      {
+        id: "p1-lost",
+        label: "Pkt 1 ✕",
+        kind: "lost",
+        delay: 0,
+        duration: 900,
+        removeIds: ["p1"],
+        path: [{ x: 790, y: 158 }, { x: 515, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "状态": "丢失", "说明": "分组 1 未到达接收方" }
+      },
+      {
+        id: "a2",
+        label: "ACK 2",
+        kind: "ack",
+        delay: 1050,
+        duration: 1000,
+        path: [{ x: 790, y: 188 }, { x: 205, y: 188 }],
+        fields: { "类型": "ACK", "确认 ack": 2, "含义": "分组 2 已接收，但分组 1 仍缺失" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "p3", label: "Pkt 3", kind: "data", x: 790, y: 218, fields: { "类型": "DATA", "序号 seq": 3 } }
+      ],
+      nodeStates: {
+        sender: "ACK2 移除 2",
+        receiver: "缓存 2 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 4 },
+      senderBuffer: [1, 3],
+      receiverBuffer: [2],
+      focus: { type: "node", id: "receiver" },
+      note: "【SR 特征】接收缓冲区出现乱序分组 2。发送缓冲区由 [1, 2, 3] 变为 [1, 3]，但窗口 base 仍为 1。"
+    }
+  },
+  {
+    title: "第 5 步：分组 3 被缓存并返回 ACK 3",
+    desc: "接收方收到分组 3。分组 3 也在接收窗口内，因此被缓存，并返回 ACK 3。发送方收到 ACK 3 后，将分组 3 从发送缓冲区移除。",
+    motions: [
+      {
+        id: "a3",
+        label: "ACK 3",
+        kind: "ack",
+        delay: 200,
+        duration: 1000,
+        path: [{ x: 790, y: 218 }, { x: 205, y: 218 }],
+        fields: { "类型": "ACK", "确认 ack": 3, "含义": "分组 3 已接收，但分组 1 仍缺失" }
+      }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "仅 1 未确认",
+        receiver: "缓存 2,3 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 4 },
+      senderBuffer: [1],
+      receiverBuffer: [2, 3],
+      focus: { type: "node", id: "sender" },
+      note: "【SR 与 GBN 的关键差异】发送缓冲区只剩 1；接收缓冲区缓存 2、3，等待分组 1。"
+    }
+  },
+  {
+    title: "第 6 步：超时，SR 仅重传分组 1",
+    desc: "分组 1 的独立定时器超时。SR 发送方只重传未确认的分组 1，而不是重传 1、2、3。",
+    motions: [
+      {
+        id: "rp1",
+        label: "Pkt 1",
+        kind: "data",
+        delay: 0,
+        duration: 1100,
+        path: [{ x: 205, y: 158 }, { x: 790, y: 158 }],
+        fields: { "类型": "DATA", "序号 seq": 1, "状态": "重传", "说明": "SR 仅重传丢失分组" }
+      }
+    ],
+    state: {
+      packets: [
+        { id: "rp1", label: "Pkt 1", kind: "data", x: 790, y: 158, fields: { "类型": "DATA", "序号 seq": 1, "状态": "重传" } }
+      ],
+      nodeStates: {
+        sender: "仅重传 1",
+        receiver: "缓存 2,3 期望 1"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 1, size: 4 },
+      receiverWindow: { base: 1, size: 4 },
+      senderBuffer: [1],
+      receiverBuffer: [2, 3],
+      focus: { type: "node", id: "sender" },
+      note: "【SR 特征】只重传分组 1，减少网络资源浪费。此处为简化演示，未展示每个分组的独立定时器细节。"
+    }
+  },
+  {
+    title: "第 7 步：分组 1 到达，连续交付 1、2、3",
+    desc: "接收方收到分组 1。由于接收缓冲区中已有 2、3，接收方可以连续交付 1、2、3，接收窗口滑动到 [4, 5, 6, 7]。发送方收到 ACK 1 后，结合此前 ACK 2、ACK 3，发送窗口也滑动到 [4, 5, 6, 7]。",
+    motions: [
+      {
+        id: "a1",
+        label: "ACK 1",
+        kind: "ack",
+        delay: 200,
+        duration: 1000,
+        path: [{ x: 790, y: 158 }, { x: 205, y: 158 }],
+        fields: { "类型": "ACK", "确认 ack": 1, "含义": "分组 1 已接收，1、2、3 可连续交付" }
+      }
+    ],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "base=4",
+        receiver: "交付 1,2,3 期望 4"
+      },
+      activeLinks: ["link1"],
+      senderWindow: { base: 4, size: 4 },
+      receiverWindow: { base: 4, size: 4 },
+      senderBuffer: [],
+      receiverBuffer: [],
+      focus: { type: "node", id: "receiver" },
+      note: "接收缓冲区清空，接收窗口滑动。发送缓冲区清空，发送窗口滑动。"
+    }
+  },
+  {
+    title: "第 8 步：SR 小结",
+    desc: "SR 的核心特征是：接收方可缓存乱序分组；发送方可仅重传丢失或未确认分组。相比 GBN，SR 减少重传量，但需要更复杂的缓冲与定时器机制。",
+    motions: [],
+    state: {
+      packets: [],
+      nodeStates: {
+        sender: "SR 完成",
+        receiver: "期望 4"
+      },
+      activeLinks: [],
+      senderWindow: { base: 4, size: 4 },
+      receiverWindow: { base: 4, size: 4 },
+      senderBuffer: [],
+      receiverBuffer: [],
+      focus: null,
+      note: "可切换回 GBN，对比超时后全部重传、接收方不缓存乱序分组的行为。"
+    }
+  }
+];
+
+/**
+ * 根据协议返回步骤数组。
+ * @param {"gbn"|"sr"} protocol
+ * @returns {Array<object>}
+ */
+function getStepsByProtocol(protocol) {
+  return protocol === "sr" ? stepsSR : stepsGBN;
+}
+
+/* ==========================================================
+   4. 全局状态
+   ========================================================== */
+
+let currentProtocol = "gbn";
+let currentSteps = getStepsByProtocol(currentProtocol);
+
+/**
+ * 当前步骤索引。
+ * 0 表示初始状态。
+ * n 表示第 n 步结束后的状态。
+ */
+let currentIndex = 0;
+
+let isPlaying = false;
+let isResetting = false;
+let playbackSpeed = 1;
+
+/**
+ * 动画中断令牌。
+ * 每次暂停、重置、新跳转都会递增，使旧动画帧循环失效。
+ */
+let animToken = 0;
+
+let playTimeoutId = null;
+let pauseResolver = null;
+
+/**
+ * 当前 Canvas 上实际绘制的数据包。
+ * 动画期间可能包含临时 motion packets。
+ */
+let renderPackets = [];
+
+/**
+ * 当前 Canvas 上绘制的协议状态（窗口、缓冲区等）。
+ * 动画期间可能是插值状态。
+ */
+let renderProtocol = getInitialState(currentProtocol);
+
+/* ==========================================================
+   5. 主题管理
+   ========================================================== */
+
+/**
+ * 应用主题。
+ * @param {"light"|"dark"} theme
+ */
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  safeLocalStorageSet("theme", theme);
+
+  const btn = document.getElementById("theme-toggle");
+  if (btn) {
+    btn.textContent = theme === "dark" ? "☀️ 浅色" : "🌙 深色";
+    btn.title = theme === "dark" ? "切换到浅色主题（T）" : "切换到深色主题（T）";
+  }
+
+  refreshColorCache();
+  drawCanvas();
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  applyTheme(current === "dark" ? "light" : "dark");
+}
+
+function initTheme() {
+  const saved = safeLocalStorageGet("theme");
+
+  if (saved === "light" || saved === "dark") {
+    applyTheme(saved);
+  } else {
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark ? "dark" : "light");
+  }
+
+  if (window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", (event) => {
+      if (!safeLocalStorageGet("theme")) {
+        applyTheme(event.matches ? "dark" : "light");
+      }
+    });
+  }
+}
+
+/* ==========================================================
+   6. SVG 构建
+   ========================================================== */
+
+function buildTopology() {
+  const svg = document.getElementById("topology");
+  const ns = "http://www.w3.org/2000/svg";
+  svg.innerHTML = "";
+
+  // 先绘制链路，保证节点覆盖在链路之上
+  LINKS.forEach((link) => {
+    const from = NODES.find((n) => n.id === link.from);
+    const to = NODES.find((n) => n.id === link.to);
+    if (!from || !to) return;
+
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("id", link.id);
+    line.classList.add("link");
+    line.setAttribute("x1", String(from.x + from.w));
+    line.setAttribute("y1", String(link.y));
+    line.setAttribute("x2", String(to.x));
+    line.setAttribute("y2", String(link.y));
+    svg.appendChild(line);
+  });
+
+  NODES.forEach((node) => {
+    const g = document.createElementNS(ns, "g");
+    g.setAttribute("id", `node-${node.id}`);
+    g.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("width", String(node.w));
+    rect.setAttribute("height", String(node.h));
+    rect.setAttribute("rx", "10");
+    rect.classList.add("node-bg");
+
+    const name = document.createElementNS(ns, "text");
+    name.setAttribute("x", String(node.w / 2));
+    name.setAttribute("y", "38");
+    name.classList.add("node-name");
+    name.textContent = node.name;
+
+    const state = document.createElementNS(ns, "text");
+    state.setAttribute("id", `state-${node.id}`);
+    state.setAttribute("x", String(node.w / 2));
+    state.setAttribute("y", "63");
+    state.classList.add("node-state");
+    state.textContent = "";
+
+    g.appendChild(rect);
+    g.appendChild(name);
+    g.appendChild(state);
+    svg.appendChild(g);
+  });
+}
+
+/* ==========================================================
+   7. Canvas 渲染
+   ========================================================== */
+
+const canvas = document.getElementById("packet-canvas");
+const ctx = canvas.getContext("2d");
+
+/**
+ * 处理 devicePixelRatio 与窗口缩放。
+ * Canvas 使用 setTransform 映射到 1000 × 500 逻辑坐标系，
+ * 与 SVG viewBox 保持一致。
+ */
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+
+  const scaleX = rect.width / LOGICAL_WIDTH;
+  const scaleY = rect.height / LOGICAL_HEIGHT;
+
+  ctx.setTransform(dpr * scaleX, 0, 0, dpr * scaleY, 0, 0);
+  drawCanvas();
+}
+
+function drawCanvas() {
+  ctx.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+  drawProtocolState();
+
+  for (const packet of renderPackets) {
+    drawPacket(packet);
+  }
+}
+
+/**
+ * 绘制底部协议状态：序列空间、窗口、缓冲区。
+ */
+function drawProtocolState() {
+  const senderNote =
+    currentProtocol === "gbn"
+      ? "GBN：发送窗口=4，超时重传全部未确认分组"
+      : "SR：发送窗口=4，独立确认定时器";
+
+  const receiverNote =
+    currentProtocol === "gbn"
+      ? "GBN：接收窗口=1，不缓存乱序"
+      : "SR：接收窗口=4，缓存乱序";
+
+  drawSequenceRow(
+    SENDER_ROW,
+    "发送方序列空间",
+    senderNote,
+    renderProtocol.senderWindow,
+    renderProtocol.senderBuffer,
+    "--win-send",
+    "--win-send-border"
+  );
+
+  drawSequenceRow(
+    RECEIVER_ROW,
+    "接收方序列空间",
+    receiverNote,
+    renderProtocol.receiverWindow,
+    renderProtocol.receiverBuffer,
+    "--win-recv",
+    "--win-recv-border"
+  );
+}
+
+/**
+ * 绘制一行序列空间。
+ */
+function drawSequenceRow(row, label, protocolNote, win, buffer, winFillVar, winBorderVar) {
+  ctx.save();
+
+  // 标题
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "bold 14px sans-serif";
+  ctx.fillStyle = getColor("--text");
+  ctx.fillText(`${label}（${protocolNote}）`, row.startX, row.titleY);
+
+  // 元信息
+  const bufferText = buffer.length ? buffer.join(", ") : "空";
+  ctx.font = "12px sans-serif";
+  ctx.fillStyle = getColor("--muted");
+  ctx.fillText(
+    `窗口 base=${Math.round(win.base)}，N=${Math.round(win.size)}｜缓冲区: [${bufferText}]`,
+    row.startX,
+    row.metaY
+  );
+
+  // 序列号槽位
+  ctx.font = "13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (let i = 0; i < SEQ_COUNT; i++) {
+    const x = row.startX + i * SEQ_SLOT_W;
+
+    ctx.fillStyle = getColor("--panel-bg");
+    ctx.fillRect(x, row.slotY, SEQ_SLOT_W, SEQ_SLOT_H);
+
+    ctx.strokeStyle = getColor("--border");
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, row.slotY, SEQ_SLOT_W, SEQ_SLOT_H);
+
+    ctx.fillStyle = getColor("--text");
+    ctx.fillText(String(i), x + SEQ_SLOT_W / 2, row.slotY + SEQ_SLOT_H / 2);
+  }
+
+  // 窗口高亮（base 可为插值浮点数，从而实现滑动动画）
+  const winX = row.startX + win.base * SEQ_SLOT_W;
+  const winW = win.size * SEQ_SLOT_W;
+
+  ctx.fillStyle = getColor(winFillVar);
+  ctx.fillRect(winX, row.slotY, winW, SEQ_SLOT_H);
+
+  ctx.strokeStyle = getColor(winBorderVar);
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(winX, row.slotY, winW, SEQ_SLOT_H);
+
+  // base 指针
+  ctx.fillStyle = getColor(winBorderVar);
+  ctx.beginPath();
+  ctx.moveTo(winX, row.slotY - 7);
+  ctx.lineTo(winX + 6, row.slotY - 1);
+  ctx.lineTo(winX - 6, row.slotY - 1);
+  ctx.closePath();
+  ctx.fill();
+
+  // 缓冲区标记
+  buffer.forEach((seq) => {
+    if (seq < 0 || seq >= SEQ_COUNT) return;
+
+    const x = row.startX + seq * SEQ_SLOT_W + 3;
+    const y = row.bufferY;
+    const w = SEQ_SLOT_W - 6;
+    const h = 15;
+
+    roundRect(ctx, x, y, w, h, 4);
+    ctx.fillStyle = getColor("--buf-bg");
+    ctx.fill();
+    ctx.strokeStyle = getColor("--buf-border");
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = getColor("--text");
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(seq), x + w / 2, y + h / 2 + 0.5);
+  });
+
+  ctx.restore();
+}
+
+/**
+ * 绘制单个数据包。
+ */
+function drawPacket(packet) {
+  if (packet.visible === false) return;
+
+  const alpha = typeof packet.alpha === "number" ? packet.alpha : 1;
+  if (alpha <= 0.02) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  let fillVar = "--pkt-data";
+  if (packet.kind === "ack") fillVar = "--pkt-ack";
+  if (packet.kind === "lost") fillVar = "--pkt-lost";
+
+  ctx.font = "bold 13px sans-serif";
+  const textWidth = ctx.measureText(packet.label).width;
+  const boxW = Math.max(52, textWidth + 20);
+  const boxH = 28;
+  const x = packet.x - boxW / 2;
+  const y = packet.y - boxH / 2;
+
+  roundRect(ctx, x, y, boxW, boxH, 7);
+  ctx.fillStyle = getColor(fillVar);
+  ctx.fill();
+
+  ctx.strokeStyle = getColor("--border");
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = getColor("--pkt-text");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(packet.label, packet.x, packet.y + 0.5);
+
+  ctx.restore();
+}
+
+/* ==========================================================
+   8. renderState：唯一幂等渲染入口
+   ========================================================== */
+
+/**
+ * 给定任意步骤结束快照，立即重绘所有 UI、SVG、Canvas。
+ * @param {object} state
+ */
+function renderState(state) {
+  renderProtocol = deepClone(state);
+  renderPackets = deepClone(state.packets || []).map((p) => ({
+    ...p,
+    visible: true,
+    alpha: 1
+  }));
+
+  updateSvgStateText(state.nodeStates);
+  updateActiveLinks(state.activeLinks || []);
+  updateInfoPanelFromState(state);
+  drawCanvas();
+}
+
+function updateSvgStateText(nodeStates) {
+  if (!nodeStates) return;
+
+  for (const nodeId of Object.keys(nodeStates)) {
+    const el = document.getElementById(`state-${nodeId}`);
+    if (el) el.textContent = nodeStates[nodeId];
+  }
+}
+
+function updateActiveLinks(activeLinkIds) {
+  const links = document.querySelectorAll(".link");
+  links.forEach((link) => link.classList.remove("active"));
+
+  activeLinkIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("active");
+  });
+}
+
+/* ==========================================================
+   9. 信息面板
+   ========================================================== */
+
+function showInfoPanel(title, html) {
+  const panel = document.getElementById("info-panel");
+  const titleEl = document.getElementById("info-title");
+  const contentEl = document.getElementById("info-content");
+
+  panel.classList.add("visible");
+  titleEl.textContent = title;
+  contentEl.innerHTML = html;
+}
+
+function hideInfoPanel() {
+  document.getElementById("info-panel").classList.remove("visible");
+  document.getElementById("info-title").textContent = "详细信息";
+  document.getElementById("info-content").innerHTML = "";
+}
+
+function fieldsToHtml(fields) {
+  const entries = Object.entries(fields || {});
+  if (!entries.length) return "<p>无字段信息。</p>";
+
+  const items = entries
+    .map(([key, value]) => `<li><strong>${escapeHtml(key)}:</strong> ${escapeHtml(String(value))}</li>`)
+    .join("");
+
+  return `<ul>${items}</ul>`;
+}
+
+function escapeHtml(text) {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function showPacketInfo(packet) {
+  showInfoPanel(`数据包：${packet.label}`, fieldsToHtml(packet.fields));
+}
+
+function showNodeInfo(nodeId) {
+  const node = NODES.find((n) => n.id === nodeId);
+  if (!node) return;
+
+  const isSender = nodeId === "sender";
+  const win = isSender ? renderProtocol.senderWindow : renderProtocol.receiverWindow;
+  const buffer = isSender ? renderProtocol.senderBuffer : renderProtocol.receiverBuffer;
+  const currentState = renderProtocol.nodeStates?.[nodeId] || "";
+
+  const html = `
+    <ul>
+      <li><strong>角色:</strong> ${escapeHtml(node.role)}</li>
+      <li><strong>当前状态:</strong> ${escapeHtml(currentState)}</li>
+      <li><strong>窗口 base:</strong> ${Math.round(win.base)}</li>
+      <li><strong>窗口大小 N:</strong> ${Math.round(win.size)}</li>
+      <li><strong>缓冲区:</strong> [${escapeHtml(buffer.join(", "))}]</li>
+      <li><strong>说明:</strong> ${escapeHtml(node.desc)}</li>
+    </ul>
+  `;
+
+  showInfoPanel(`节点：${node.name}`, html);
+}
+
+function showWindowInfo(side) {
+  const isSender = side === "sender";
+  const win = isSender ? renderProtocol.senderWindow : renderProtocol.receiverWindow;
+  const buffer = isSender ? renderProtocol.senderBuffer : renderProtocol.receiverBuffer;
+
+  const protocolName = currentProtocol === "gbn" ? "Go-Back-N" : "Selective-Repeat";
+
+  const explanation = isSender
+    ? "发送缓冲区保存已发送但未确认的分组。GBN 通常在超时后重传全部未确认分组；SR 可仅重传未确认分组。"
+    : currentProtocol === "gbn"
+      ? "GBN 接收窗口=1。乱序分组不进入接收缓冲区，而是被丢弃，并重复确认最近按序分组。"
+      : "SR 接收窗口>1。乱序分组若在接收窗口内，会被缓存，并发送对应 ACK。";
+
+  const html = `
+    <ul>
+      <li><strong>协议:</strong> ${escapeHtml(protocolName)}</li>
+      <li><strong>位置:</strong> ${isSender ? "发送方" : "接收方"}</li>
+      <li><strong>窗口 base:</strong> ${Math.round(win.base)}</li>
+      <li><strong>窗口大小 N:</strong> ${Math.round(win.size)}</li>
+      <li><strong>缓冲区分组:</strong> [${escapeHtml(buffer.join(", "))}]</li>
+      <li><strong>说明:</strong> ${escapeHtml(explanation)}</li>
+    </ul>
+  `;
+
+  showInfoPanel(isSender ? "发送窗口与发送缓冲区" : "接收窗口与接收缓冲区", html);
+}
+
+function updateInfoPanelFromState(state) {
+  if (!state.focus) {
+    hideInfoPanel();
+    return;
+  }
+
+  if (state.focus.type === "node") {
+    showNodeInfo(state.focus.id);
+    return;
+  }
+
+  if (state.focus.type === "packet") {
+    const packet = (state.packets || []).find((p) => p.id === state.focus.id);
+    if (packet) {
+      showPacketInfo(packet);
+    } else {
+      hideInfoPanel();
+    }
+  }
+}
+
+/* ==========================================================
+   10. 动画层
+   ========================================================== */
+
+/**
+ * 折线路径插值。
+ * @param {Array<{x:number,y:number}>} path
+ * @param {number} t 0～1
+ * @returns {{x:number,y:number}}
+ */
+function interpolatePath(path, t) {
+  if (!path || path.length === 0) return { x: 0, y: 0 };
+  if (path.length === 1) return path[0];
+
+  const segments = [];
+  let totalLength = 0;
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const dx = path[i + 1].x - path[i].x;
+    const dy = path[i + 1].y - path[i].y;
+    const len = Math.hypot(dx, dy);
+    segments.push({ len, dx, dy, start: path[i] });
+    totalLength += len;
+  }
+
+  if (totalLength === 0) return path[0];
+
+  let target = clamp(t, 0, 1) * totalLength;
+
+  for (const seg of segments) {
+    if (target <= seg.len) {
+      const ratio = seg.len === 0 ? 0 : target / seg.len;
+      return {
+        x: seg.start.x + seg.dx * ratio,
+        y: seg.start.y + seg.dy * ratio
+      };
+    }
+    target -= seg.len;
+  }
+
+  return path[path.length - 1];
+}
+
+/**
+ * 根据步骤 motions 创建动画期间的临时数据包。
+ * 这是修复“看不到数据包移动”的关键：
+ * 即使 prevState.packets 中不存在 motion.id，也会创建该运动包。
+ */
+function createAnimationPackets(step, prevState) {
+  const motions = Array.isArray(step.motions) ? step.motions : [];
+
+  const packets = deepClone(prevState.packets || []).map((p) => ({
+    ...p,
+    visible: true,
+    alpha: 1
+  }));
+
+  const activeMotions = [];
+
+  motions.forEach((motion) => {
+    // 某些动画需要移除原有包，例如 p1 丢失动画会移除原 p1。
+    if (Array.isArray(motion.removeIds)) {
+      motion.removeIds.forEach((removeId) => {
+        const idx = packets.findIndex((p) => p.id === removeId);
+        if (idx >= 0) packets.splice(idx, 1);
+      });
+    }
+
+    const packet = {
+      id: motion.id,
+      label: motion.label,
+      kind: motion.kind,
+      fields: motion.fields || {},
+      x: motion.path[0].x,
+      y: motion.path[0].y,
+      visible: false,
+      alpha: 1,
+      isMotion: true
+    };
+
+    packets.push(packet);
+    activeMotions.push({ motion, packet });
+  });
+
+  return { packets, activeMotions };
+}
+
+function updateAnimationPackets(activeMotions, elapsed) {
+  activeMotions.forEach(({ motion, packet }) => {
+    const local = elapsed - motion.delay;
+
+    if (local < 0) {
+      packet.visible = false;
+      return;
+    }
+
+    packet.visible = true;
+    const t = clamp(local / motion.duration, 0, 1);
+    const pos = interpolatePath(motion.path, t);
+    packet.x = pos.x;
+    packet.y = pos.y;
+
+    if (motion.kind === "lost") {
+      // 丢失包在后 25% 逐渐淡出。
+      packet.alpha = t < 0.75 ? 1 : clamp(1 - (t - 0.75) / 0.25, 0, 1);
+    } else {
+      packet.alpha = 1;
+    }
+  });
+}
+
+/**
+ * 插值协议状态，用于窗口滑动动画。
+ */
+function interpolateProtocolState(prevState, targetState, t) {
+  const useTargetDiscrete = t >= 0.45;
+
+  return {
+    packets: targetState.packets,
+    nodeStates: useTargetDiscrete ? targetState.nodeStates : prevState.nodeStates,
+    activeLinks: targetState.activeLinks,
+    senderWindow: {
+      base: lerp(prevState.senderWindow.base, targetState.senderWindow.base, t),
+      size: lerp(prevState.senderWindow.size, targetState.senderWindow.size, t)
+    },
+    receiverWindow: {
+      base: lerp(prevState.receiverWindow.base, targetState.receiverWindow.base, t),
+      size: lerp(prevState.receiverWindow.size, targetState.receiverWindow.size, t)
+    },
+    senderBuffer: useTargetDiscrete ? targetState.senderBuffer : prevState.senderBuffer,
+    receiverBuffer: useTargetDiscrete ? targetState.receiverBuffer : prevState.receiverBuffer,
+    focus: targetState.focus,
+    note: targetState.note
+  };
+}
+
+/**
+ * 播放单个步骤内的动画。
+ * 包括：
+ * - 数据包运动；
+ * - 丢失包淡出；
+ * - 窗口 base 平滑滑动；
+ * - 缓冲区状态切换。
+ */
+function playStepAnimation(step, prevState, targetState, token) {
+  return new Promise((resolve) => {
+    const motions = Array.isArray(step.motions) ? step.motions : [];
+    const { packets, activeMotions } = createAnimationPackets(step, prevState);
+    renderPackets = packets;
+
+    const maxMotionEnd = motions.reduce(
+      (max, m) => Math.max(max, m.delay + m.duration),
+      0
+    );
+
+    // 窗口滑动安排主动画接近结束时开始，使 ACK 到达后窗口再滑动。
+    const slideStart = maxMotionEnd > 0 ? Math.max(0, maxMotionEnd - 380) : 0;
+    const slideDuration = maxMotionEnd > 0 ? 380 : 460;
+    const totalDuration = Math.max(maxMotionEnd, slideStart + slideDuration) + 90;
+
+    const startTime = performance.now();
+
+    function frame(now) {
+      if (animToken !== token) {
+        resolve();
+        return;
+      }
+
+      const elapsed = (now - startTime) * playbackSpeed;
+
+      updateAnimationPackets(activeMotions, elapsed);
+
+      const windowT = easeInOut(clamp((elapsed - slideStart) / slideDuration, 0, 1));
+      renderProtocol = interpolateProtocolState(prevState, targetState, windowT);
+
+      updateSvgStateText(renderProtocol.nodeStates);
+      updateActiveLinks(renderProtocol.activeLinks || []);
+      drawCanvas();
+
+      if (elapsed >= totalDuration) {
+        resolve();
+      } else {
+        requestAnimationFrame(frame);
+      }
+    }
+
+    requestAnimationFrame(frame);
+  });
+}
+
+/* ==========================================================
+   11. 状态安全读取与 goToStep：唯一跳转入口
+   ========================================================== */
+
+/**
+ * 安全获取某个步骤索引对应的状态快照。
+ * 若索引越界，返回当前协议初始状态。
+ * @param {number} index
+ * @returns {object}
+ */
+function getStateByIndex(index) {
+  if (index <= 0) {
+    return getInitialState(currentProtocol);
+  }
+
+  const step = currentSteps[index - 1];
+  if (!step || !step.state) {
+    return getInitialState(currentProtocol);
+  }
+
+  return step.state;
+}
+
+function getCurrentState() {
+  const safeIndex = clamp(currentIndex, 0, currentSteps.length);
+  return getStateByIndex(safeIndex);
+}
+
+/**
+ * 跳转到指定步骤索引。
+ * @param {number} index 0 表示初始状态，1..steps.length 表示步骤结束状态。
+ * @param {{animate?: boolean}} options
+ */
+async function goToStep(index, options = {}) {
+  const animate = options.animate !== false;
+
+  if (isResetting) return;
+
+  const safeIndex = clamp(Math.round(index), 0, currentSteps.length);
+  if (safeIndex === currentIndex) return;
+
+  animToken += 1;
+  const token = animToken;
+
+  const isForward = safeIndex > currentIndex;
+
+  const prevState = getStateByIndex(currentIndex);
+  const targetState = getStateByIndex(safeIndex);
+
+  currentIndex = safeIndex;
+
+  updateControls();
+  updateStepInfo();
+
+  if (animate && isForward && safeIndex > 0) {
+    const step = currentSteps[safeIndex - 1];
+
+    if (step) {
+      // 先落位到前一步终态，再播放本步骤 motions。
+      renderState(prevState);
+
+      await playStepAnimation(step, prevState, targetState, token);
+
+      if (animToken !== token) {
+        // 已被 pause / reset / 新的跳转打断。
+        return;
+      }
+    }
+  }
+
+  // 幂等落位到目标步骤终态。
+  renderState(targetState);
+}
+
+/* ==========================================================
+   12. 播放控制
+   ========================================================== */
+
+async function playLoop() {
+  if (!isPlaying) return;
+
+  currentIndex = clamp(currentIndex, 0, currentSteps.length);
+
+  if (currentIndex >= currentSteps.length) {
+    pause();
+    return;
+  }
+
+  await goToStep(currentIndex + 1, { animate: true });
+
+  if (!isPlaying) return;
+
+  // 步骤间停顿，也受速度缩放。
+  await new Promise((resolve) => {
+    pauseResolver = resolve;
+    playTimeoutId = setTimeout(() => {
+      pauseResolver = null;
+      playTimeoutId = null;
+      resolve();
+    }, 750 / playbackSpeed);
+  });
+
+  if (isPlaying) {
+    playLoop();
+  }
+}
+
+function play() {
+  if (isResetting) return;
+
+  currentIndex = clamp(currentIndex, 0, currentSteps.length);
+
+  // 若已播放到末尾，则重新播放。
+  if (currentIndex >= currentSteps.length) {
+    reset();
+    setTimeout(() => {
+      if (!isResetting) play();
+    }, 420);
+    return;
+  }
+
+  if (isPlaying) return;
+
+  isPlaying = true;
+  updateControls();
+  playLoop();
+}
+
+function pause() {
+  isPlaying = false;
+
+  if (playTimeoutId !== null) {
+    clearTimeout(playTimeoutId);
+    playTimeoutId = null;
+  }
+
+  if (pauseResolver) {
+    pauseResolver();
+    pauseResolver = null;
+  }
+
+  // 递增 token，立即中断正在运行的动画帧。
+  animToken += 1;
+
+  // 任何时刻页面都必须处于某个合法快照。
+  renderState(getCurrentState());
+  updateControls();
+}
+
+function togglePlay() {
+  if (isPlaying) {
+    pause();
+  } else {
+    play();
+  }
+}
+
+function stepForward() {
+  if (isResetting) return;
+
+  // 单步执行前必须先暂停，避免与自动播放冲突。
+  pause();
+
+  currentIndex = clamp(currentIndex, 0, currentSteps.length);
+
+  if (currentIndex < currentSteps.length) {
+    goToStep(currentIndex + 1, { animate: true });
+  }
+}
+
+function stepBackward() {
+  if (isResetting) return;
+
+  // 上一步前必须先暂停。
+  pause();
+
+  currentIndex = clamp(currentIndex, 0, currentSteps.length);
+
+  if (currentIndex > 0) {
+    // 回退禁止反向播放正向动画，直接落位。
+    goToStep(currentIndex - 1, { animate: false });
+  }
+}
+
+function reset() {
+  if (isResetting) return;
+
+  isResetting = true;
+  pause();
+  updateControls();
+
+  const scene = document.getElementById("scene-container");
+  scene.style.opacity = "0";
+
+  setTimeout(() => {
+    animToken += 1;
+    currentIndex = 0;
+
+    renderState(getInitialState(currentProtocol));
+    updateStepInfo();
+
+    scene.style.opacity = "1";
+    isResetting = false;
+    updateControls();
+  }, 300);
+}
+
+/**
+ * 切换协议。
+ * 修复点：
+ * - 先安全暂停当前协议；
+ * - 切换 currentSteps 后立即将 currentIndex 置 0；
+ * - 再执行重置，避免旧索引超出新步骤数组范围。
+ */
+function switchProtocol(protocol) {
+  if (isResetting) return;
+  if (protocol !== "gbn" && protocol !== "sr") return;
+
+  // 使用旧 steps 安全停止，避免切换过程中继续推进。
+  pause();
+
+  currentProtocol = protocol;
+  currentSteps = getStepsByProtocol(protocol);
+  currentIndex = 0;
+
+  reset();
+}
+
+/* ==========================================================
+   13. UI 同步
+   ========================================================== */
+
+function updateControls() {
+  const btnPrev = document.getElementById("btn-prev");
+  const btnNext = document.getElementById("btn-next");
+  const btnPlay = document.getElementById("btn-play");
+  const btnReset = document.getElementById("btn-reset");
+  const protocolSelect = document.getElementById("protocol-select");
+  const speedSelect = document.getElementById("speed-select");
+
+  const safeCurrent = clamp(currentIndex, 0, currentSteps.length);
+
+  btnPrev.disabled = isResetting || safeCurrent <= 0;
+  btnNext.disabled = isResetting || safeCurrent >= currentSteps.length;
+  btnReset.disabled = isResetting;
+  protocolSelect.disabled = isResetting;
+  speedSelect.disabled = isResetting;
+
+  if (safeCurrent >= currentSteps.length && !isPlaying) {
+    btnPlay.textContent = "⟳ 重新播放";
+  } else {
+    btnPlay.textContent = isPlaying ? "⏸ 暂停" : "▶ 播放";
+  }
+
+  btnPlay.disabled = isResetting;
+}
+
+function updateStepInfo() {
+  const titleEl = document.getElementById("step-title");
+  const descEl = document.getElementById("step-desc");
+  const noteEl = document.getElementById("step-note");
+  const progressEl = document.getElementById("step-progress");
+  const progressBar = document.getElementById("progress-bar");
+
+  const total = currentSteps.length;
+  const safeCurrent = clamp(currentIndex, 0, total);
+
+  // 若因异常导致索引越界，此处同步修正，避免后续控制失效。
+  if (safeCurrent !== currentIndex) {
+    currentIndex = safeCurrent;
+  }
+
+  progressEl.textContent =
+    safeCurrent === 0
+      ? `第 0 / ${total} 步（初始状态）`
+      : `第 ${safeCurrent} / ${total} 步`;
+
+  progressBar.style.width = `${(safeCurrent / total) * 100}%`;
+
+  if (safeCurrent === 0) {
+    const initial = getInitialState(currentProtocol);
+    titleEl.textContent = "初始状态";
+    descEl.textContent =
+      currentProtocol === "gbn"
+        ? "当前协议：Go-Back-N。点击“播放”或“单步执行”，观察发送窗口、接收窗口和发送缓冲区。"
+        : "当前协议：Selective-Repeat。点击“播放”或“单步执行”，观察 SR 如何缓存乱序分组并只重传丢失分组。";
+    noteEl.textContent = initial.note;
+    return;
+  }
+
+  const step = currentSteps[safeCurrent - 1];
+
+  if (!step) {
+    const initial = getInitialState(currentProtocol);
+    titleEl.textContent = "初始状态";
+    descEl.textContent = "步骤数据异常，已安全回退到初始状态。";
+    noteEl.textContent = initial.note;
+    return;
+  }
+
+  titleEl.textContent = step.title;
+  descEl.textContent = step.desc;
+  noteEl.textContent = step.state.note || "";
+}
+
+/* ==========================================================
+   14. 交互绑定
+   ========================================================== */
+
+function bindUI() {
+  document.getElementById("btn-play").addEventListener("click", togglePlay);
+  document.getElementById("btn-next").addEventListener("click", stepForward);
+  document.getElementById("btn-prev").addEventListener("click", stepBackward);
+  document.getElementById("btn-reset").addEventListener("click", reset);
+  document.getElementById("theme-toggle").addEventListener("click", toggleTheme);
+
+  document.getElementById("speed-select").addEventListener("change", (event) => {
+    const value = parseFloat(event.target.value);
+    playbackSpeed = Number.isFinite(value) && value > 0 ? value : 1;
+  });
+
+  const protocolSelect = document.getElementById("protocol-select");
+
+  protocolSelect.addEventListener("change", (event) => {
+    const value = event.target.value;
+    switchProtocol(value);
+
+    /*
+      修复点：切换后让下拉框失焦。
+      否则焦点停留在 <select> 上，快捷键会按设计被禁用，
+      用户可能误以为快捷键失效。
+    */
+    event.target.blur();
+  });
+
+  canvas.addEventListener("click", handleCanvasClick);
+
+  window.addEventListener("resize", resizeCanvas);
+}
+
+function getCanvasLogicalPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * LOGICAL_WIDTH,
+    y: ((event.clientY - rect.top) / rect.height) * LOGICAL_HEIGHT
+  };
+}
+
+function handleCanvasClick(event) {
+  const pos = getCanvasLogicalPosition(event);
+
+  // 1. 优先命中数据包
+  for (let i = renderPackets.length - 1; i >= 0; i--) {
+    const p = renderPackets[i];
+    if (p.visible === false || (typeof p.alpha === "number" && p.alpha < 0.1)) continue;
+
+    if (Math.abs(pos.x - p.x) <= 36 && Math.abs(pos.y - p.y) <= 18) {
+      showPacketInfo(p);
+      return;
+    }
+  }
+
+  // 2. 命中节点
+  for (const node of NODES) {
+    if (
+      pos.x >= node.x &&
+      pos.x <= node.x + node.w &&
+      pos.y >= node.y &&
+      pos.y <= node.y + node.h
+    ) {
+      showNodeInfo(node.id);
+      return;
+    }
+  }
+
+  // 3. 命中发送方序列空间区域
+  const senderRowWidth = SEQ_COUNT * SEQ_SLOT_W;
+  if (
+    pos.x >= SENDER_ROW.startX &&
+    pos.x <= SENDER_ROW.startX + senderRowWidth &&
+    pos.y >= SENDER_ROW.titleY - 18 &&
+    pos.y <= SENDER_ROW.bufferY + 22
+  ) {
+    showWindowInfo("sender");
+    return;
+  }
+
+  // 4. 命中接收方序列空间区域
+  if (
+    pos.x >= RECEIVER_ROW.startX &&
+    pos.x <= RECEIVER_ROW.startX + senderRowWidth &&
+    pos.y >= RECEIVER_ROW.titleY - 18 &&
+    pos.y <= RECEIVER_ROW.bufferY + 22
+  ) {
+    showWindowInfo("receiver");
+    return;
+  }
+
+  hideInfoPanel();
+}
+
+/* ==========================================================
+   15. 快捷键
+   ========================================================== */
+
+function isShortcutBlockedByFocus() {
+  const active = document.activeElement;
+  if (!active) return false;
+
+  const tag = active.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    return true;
+  }
+
+  return Boolean(active.isContentEditable);
+}
+
+function flashControlByKey(key) {
+  const buttonId = SHORTCUT_BUTTON_MAP[key];
+  if (!buttonId) return;
+
+  const button = document.getElementById(buttonId);
+  if (!button || button.disabled) return;
+
+  button.classList.remove("flash");
+
+  // 强制重排，确保重复按键时动画能重新触发。
+  void button.offsetWidth;
+
+  button.classList.add("flash");
+
+  setTimeout(() => {
+    button.classList.remove("flash");
+  }, 330);
+}
+
+function bindShortcuts() {
+  document.addEventListener("keydown", (event) => {
+    if (isShortcutBlockedByFocus()) return;
+
+    const actionName = SHORTCUTS[event.key];
+    if (!actionName) return;
+
+    // 空格与方向键需要阻止默认页面滚动。
+    if (event.key === " " || event.key.startsWith("Arrow")) {
+      event.preventDefault();
+    }
+
+    if (isResetting) return;
+
+    const action = window[actionName];
+    if (typeof action === "function") {
+      action();
+      flashControlByKey(event.key);
+    }
+  });
+}
+
+/* ==========================================================
+   16. 初始化
+   ========================================================== */
+
+function init() {
+  buildTopology();
+  initTheme();
+  resizeCanvas();
+
+  bindUI();
+  bindShortcuts();
+
+  renderProtocol = getInitialState(currentProtocol);
+  renderPackets = [];
+
+  renderState(renderProtocol);
+  updateStepInfo();
+  updateControls();
+}
+
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
