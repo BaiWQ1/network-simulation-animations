@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCP 超时重传与快速重传 - 时空图交互演示</title>
+<style>
+:root {
+  --bg: #f0f2f5;
+  --text: #1a1a2e;
+  --text-muted: #64748b;
+  --panel-bg: #ffffff;
+  --panel-bg-alt: #f8fafc;
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-light: rgba(99,102,241,0.1);
+  --btn-bg: #ffffff;
+  --btn-hover: #f8fafc;
+  --btn-disabled: #f1f5f9;
+  --btn-disabled-text: #94a3b8;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+  
+  --node-bg: #eef2ff;
+  --node-border: #6366f1;
+  --link-color: #cbd5e1;
+  
+  --pkt-data: #3b82f6;
+  --pkt-data-bg: #eff6ff;
+  --pkt-ack: #10b981;
+  --pkt-ack-bg: #ecfdf5;
+  --pkt-lost: #ef4444;
+  --pkt-lost-bg: #fef2f2;
+  --pkt-retransmit: #8b5cf6;
+  --pkt-retransmit-bg: #f5f3ff;
+  --pkt-dupack: #f59e0b;
+  --pkt-dupack-bg: #fffbeb;
+  --pkt-label-light: #ffffff;
+  
+  --diagram-line: #94a3b8;
+  --diagram-grid: #e2e8f0;
+  --diagram-dot: #cbd5e1;
+  --time-marker: #94a3b8;
+  
+  --progress-bg: #e2e8f0;
+  --progress-fill: #6366f1;
+  
+  --info-key: #64748b;
+  --info-value: #1e293b;
+  
+  --flash: rgba(99,102,241,0.25);
+  --viz-bg: #fafbfe;
+  
+  color-scheme: light dark;
+}
+
+[data-theme="dark"] {
+  --bg: #0f1219;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --panel-bg: #1a1f2e;
+  --panel-bg-alt: #232838;
+  --border: #2d3548;
+  --border-light: #232838;
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-light: rgba(129,140,248,0.12);
+  --btn-bg: #232838;
+  --btn-hover: #2d3548;
+  --btn-disabled: #1a1f2e;
+  --btn-disabled-text: #475569;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow: 0 4px 12px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+  
+  --node-bg: #1e1b4b;
+  --node-border: #818cf8;
+  --link-color: #475569;
+  
+  --pkt-data: #60a5fa;
+  --pkt-data-bg: rgba(59,130,246,0.15);
+  --pkt-ack: #34d399;
+  --pkt-ack-bg: rgba(16,185,129,0.15);
+  --pkt-lost: #f87171;
+  --pkt-lost-bg: rgba(239,68,68,0.15);
+  --pkt-retransmit: #a78bfa;
+  --pkt-retransmit-bg: rgba(139,92,246,0.15);
+  --pkt-dupack: #fbbf24;
+  --pkt-dupack-bg: rgba(245,158,11,0.15);
+  --pkt-label-light: #0f1219;
+  
+  --diagram-line: #64748b;
+  --diagram-grid: #1e293b;
+  --diagram-dot: #334155;
+  --time-marker: #64748b;
+  
+  --progress-bg: #334155;
+  --progress-fill: #818cf8;
+  
+  --info-key: #94a3b8;
+  --info-value: #e2e8f0;
+  
+  --flash: rgba(129,140,248,0.25);
+  --viz-bg: #141824;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
+}
+
+.app-container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+}
+
+/* ===== 页头 ===== */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--panel-bg);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-header h1 {
+  font-size: 1.3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.app-header .subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--btn-bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-toggle:hover {
+  background: var(--btn-hover);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+.theme-toggle .icon { font-size: 1.1rem; }
+
+/* ===== 主布局 ===== */
+.app-main {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ===== 可视化区域 ===== */
+.viz-area {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.viz-title {
+  padding: 14px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light);
+  background: var(--panel-bg-alt);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-container {
+  flex: 1;
+  position: relative;
+  min-height: 520px;
+  background: var(--viz-bg);
+  overflow: hidden;
+}
+
+.viz-container svg,
+.viz-container canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+}
+
+.viz-container svg { z-index: 1; pointer-events: none; }
+.viz-container canvas { z-index: 2; cursor: crosshair; }
+
+/* ===== 侧边栏 ===== */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: calc(100vh - 140px);
+  padding-right: 4px;
+}
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s;
+}
+
+.panel:hover { box-shadow: var(--shadow); }
+
+.panel-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-title::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 12px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* ===== 控制面板 ===== */
+.controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:active:not(:disabled) { transform: scale(0.95); }
+
+.btn:disabled {
+  background: var(--btn-disabled);
+  color: var(--btn-disabled-text);
+  cursor: not-allowed;
+  border-color: var(--border-light);
+}
+
+.btn.primary {
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+}
+
+.btn.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+}
+
+.btn.flash { animation: btnFlash 0.35s ease; }
+
+@keyframes btnFlash {
+  0% { box-shadow: 0 0 0 4px var(--flash); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.speed-control label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.speed-control select {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+/* ===== 步骤信息 ===== */
+.step-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.step-progress .progress-text {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 5px;
+  background: var(--progress-bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-bar .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #8b5cf6);
+  border-radius: 3px;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.step-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.step-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.step-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--accent-light);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-left: 3px solid var(--accent);
+  line-height: 1.5;
+}
+
+/* ===== 信息面板 ===== */
+.info-panel .info-content { font-size: 0.8rem; }
+
+.info-panel .info-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.info-panel .info-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+}
+
+.info-panel .field-key {
+  color: var(--info-key);
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+.info-panel .field-value {
+  color: var(--info-value);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.75rem;
+  background: var(--panel-bg-alt);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.info-panel .empty-msg {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ===== 图例 ===== */
+.legend-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.legend-item:hover { background: var(--panel-bg-alt); }
+
+.legend-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ===== 快捷键 ===== */
+.shortcuts-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 0.73rem;
+  align-items: center;
+}
+
+.shortcuts-list kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: monospace;
+  font-size: 0.68rem;
+  min-width: 24px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.shortcuts-list span { color: var(--text-muted); }
+
+/* ===== 教学简化说明 ===== */
+.simplification-notes {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.simplification-notes ul { list-style: none; padding: 0; }
+
+.simplification-notes li {
+  padding-left: 18px;
+  position: relative;
+  margin-bottom: 5px;
+}
+
+.simplification-notes li::before {
+  content: "⚠️";
+  position: absolute;
+  left: 0;
+  font-size: 0.65rem;
+}
+
+/* ===== 页脚 ===== */
+.app-footer {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+@media (max-width: 960px) {
+  .app-main { grid-template-columns: 1fr; }
+  .sidebar { max-height: none; }
+  .viz-container { min-height: 420px; }
+  .controls { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="app-container">
+  <header class="app-header">
+    <div>
+      <h1>🌐 TCP 超时重传与快速重传</h1>
+      <div class="subtitle">时空图交互演示 · 计算机网络实验教学</div>
+    </div>
+    <button class="theme-toggle" id="themeToggle" title="切换主题 (T)">
+      <span class="icon" id="themeIcon">🌙</span>
+      <span id="themeLabel">深色模式</span>
+    </button>
+  </header>
+
+  <main class="app-main">
+    <section class="viz-area">
+      <div class="viz-title">📊 TCP 报文传输时空图 <span style="opacity:0.6;font-size:0.75rem">（时间 ↓）</span></div>
+      <div class="viz-container" id="vizContainer">
+        <svg id="topologySvg" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet"></svg>
+        <canvas id="packetCanvas"></canvas>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="panel">
+        <div class="panel-title">控制面板</div>
+        <div class="controls">
+          <button class="btn" id="btnPrev" title="上一步 (A/←)">◀ 回退</button>
+          <button class="btn" id="btnStep" title="单步 (S/→)">下一步 ▶</button>
+          <button class="btn primary" id="btnPlay" title="播放/暂停 (Space)">▶ 播放</button>
+          <button class="btn" id="btnReset" title="重置 (R)">↺ 重置</button>
+        </div>
+        <div class="speed-control">
+          <label>⚡ 速度</label>
+          <select id="speedSelect">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1.0×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2.0×</option>
+            <option value="3">3.0×</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">当前步骤</div>
+        <div class="step-progress">
+          <span class="progress-text" id="progressText">0/0</span>
+          <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+        </div>
+        <div class="step-title" id="stepTitle">-</div>
+        <div class="step-desc" id="stepDesc">-</div>
+        <div class="step-note" id="stepNote" style="display:none;"></div>
+      </div>
+
+      <div class="panel info-panel">
+        <div class="panel-title">详细信息</div>
+        <div class="info-content" id="infoContent">
+          <p class="empty-msg">🖱️ 点击时空图中的数据包或节点查看详情</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">图例</div>
+        <div class="legend-grid">
+          <div class="legend-item"><div class="legend-color" style="background:var(--pkt-data)"></div>数据报文</div>
+          <div class="legend-item"><div class="legend-color" style="background:var(--pkt-ack)"></div>确认 ACK</div>
+          <div class="legend-item"><div class="legend-color" style="background:var(--pkt-lost)"></div>丢失报文</div>
+          <div class="legend-item"><div class="legend-color" style="background:var(--pkt-retransmit)"></div>重传报文</div>
+          <div class="legend-item"><div class="legend-color" style="background:var(--pkt-dupack)"></div>重复 ACK</div>
+          <div class="legend-item"><div class="legend-color" style="background:var(--diagram-line)"></div>时间轴线</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">快捷键</div>
+        <div class="shortcuts-list">
+          <kbd>Space</kbd><span>播放 / 暂停</span>
+          <kbd>S / →</kbd><span>下一步</span>
+          <kbd>A / ←</kbd><span>上一步</span>
+          <kbd>R</kbd><span>重置</span>
+          <kbd>T</kbd><span>切换主题</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">教学简化说明</div>
+        <div class="simplification-notes">
+          <ul>
+            <li>忽略 TCP 报文段实际字节偏移，使用抽象序号</li>
+            <li>RTO 未展示具体计算过程（Karn/SRTT）</li>
+            <li>多个重复 ACK 合并为一步展示</li>
+            <li>忽略网络传播延迟差异</li>
+            <li>未展示拥塞控制窗口变化</li>
+            <li>快速重传后的快速恢复阶段未涉及</li>
+          </ul>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="app-footer">TCP 超时重传与快速重传 · 时空图交互演示 · 仅供教学辅助</footer>
+</div>
+
+<script>
+'use strict';
+
+// ===== 常量与工具 =====
+const LOGICAL_W = 1000, LOGICAL_H = 1000;
+const SENDER_X = 160, RECEIVER_X = 840;
+const LIFELINE_TOP = 70, LIFELINE_BOTTOM = 960;
+const STEP_PAUSE_BASE = 600;
+
+const SHORTCUTS = {
+  ' ': 'togglePlay', 's': 'stepForward', 'S': 'stepForward',
+  'ArrowRight': 'stepForward', 'a': 'stepBackward', 'A': 'stepBackward',
+  'ArrowLeft': 'stepBackward', 'r': 'reset', 'R': 'reset',
+  't': 'toggleTheme', 'T': 'toggleTheme'
+};
+
+function lerp(a,b,t){return a+(b-a)*t}
+function interpolatePath(path,t){
+  if(path.length===0)return{x:0,y:0};
+  if(path.length===1||t<=0)return{...path[0]};
+  if(t>=1)return{...path[path.length-1]};
+  let totalLen=0;const segs=[];
+  for(let i=1;i<path.length;i++){
+    const dx=path[i].x-path[i-1].x,dy=path[i].y-path[i-1].y;
+    const len=Math.sqrt(dx*dx+dy*dy);
+    segs.push({s:path[i-1],e:path[i],len});totalLen+=len;
+  }
+  let target=t*totalLen;
+  for(const seg of segs){
+    if(target<=seg.len){
+      const st=seg.len>0?target/seg.len:0;
+      return{x:lerp(seg.s.x,seg.e.x,st),y:lerp(seg.s.y,seg.e.y,st)};
+    }
+    target-=seg.len;
+  }
+  return{...path[path.length-1]};
+}
+function pointToSegmentDist(px,py,x1,y1,x2,y2){
+  const dx=x2-x1,dy=y2-y1,lenSq=dx*dx+dy*dy;
+  if(lenSq===0)return Math.hypot(px-x1,py-y1);
+  let t=((px-x1)*dx+(py-y1)*dy)/lenSq;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));
+}
+function delay(ms){return new Promise(r=>setTimeout(r,ms))}
+
+// ===== 拓扑定义 =====
+const NODES=[
+  {id:'sender',label:'发送方',role:'TCP 数据发送端',x:SENDER_X,y:LIFELINE_TOP,description:'负责发送 TCP 数据报文段，维护发送窗口与超时计时器。当检测到丢包时执行重传。'},
+  {id:'receiver',label:'接收方',role:'TCP 数据接收端',x:RECEIVER_X,y:LIFELINE_TOP,description:'接收 TCP 数据报文段，对按序到达的数据返回累积确认。对乱序到达的数据发送重复 ACK。'}
+];
+
+// ===== steps 数据 =====
+const initialState={
+  packets:[],nodeStates:{sender:'就绪',receiver:'就绪'},activeLinks:[],focus:null,
+  note:'TCP 连接已建立，发送方准备发送数据。本演示展示超时重传和快速重传两种丢包恢复机制。'
+};
+
+const steps=[
+  {title:'第 1 步：发送报文段 1',desc:'发送方发送 seq=1000 的数据报文段（1000 字节）。',
+   motions:[{id:'pkt1',label:'seq=1000',kind:'data',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],delay:0,duration:1200,fields:{'序号 seq':1000,'确认号 ack':1,'数据长度':'1000 字节','标志位':'ACK=1'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000,'确认号 ack':1,'数据长度':'1000 字节','标志位':'ACK=1'}}],
+   nodeStates:{sender:'已发送 pkt1',receiver:'已接收 pkt1'},activeLinks:['main-link'],focus:{type:'packet',id:'pkt1'},
+   note:'报文段 1 从发送方出发，在时空图中表现为一条从左上到右下的斜线。'}},
+  {title:'第 2 步：接收方确认 ACK=2000',desc:'接收方成功接收，发送累积确认 ACK=2000。',
+   motions:[{id:'ack1',label:'ACK=2000',kind:'ack',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],delay:0,duration:1000,fields:{'确认号 ack':2000,'标志位':'ACK=1','含义':'期望接收 seq=2000'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000,'确认号 ack':1,'数据长度':'1000 字节'}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000,'标志位':'ACK=1'}}],
+   nodeStates:{sender:'收到 ACK=2000',receiver:'等待下一报文'},activeLinks:['main-link'],focus:{type:'packet',id:'ack1'},
+   note:'TCP 累积确认：ACK=2000 表示序号 2000 之前的所有字节已成功接收。'}},
+  {title:'第 3 步：发送报文段 2（将丢失）',desc:'发送方发送 seq=2000，但此报文段将在传输途中丢失。',
+   motions:[{id:'pkt2',label:'seq=2000',kind:'data',path:[{x:SENDER_X,y:325},{x:520,y:355}],delay:0,duration:800,fields:{'序号 seq':2000,'数据长度':'1000 字节','备注':'此报文段将丢失'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'数据长度':'1000 字节','状态':'传输中丢失'}}],
+   nodeStates:{sender:'已发送 pkt2，等待 ACK',receiver:'未收到 pkt2'},activeLinks:['main-link'],focus:{type:'packet',id:'pkt2'},
+   note:'报文段 2 在网络中丢失。发送方的超时计时器（RTO）正在计时。'}},
+  {title:'第 4 步：等待 RTO 超时',desc:'发送方未收到确认，RTO 计时器到期，触发超时重传。',
+   motions:[],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'传输中丢失'}}],
+   nodeStates:{sender:'⏰ RTO 超时！准备重传',receiver:'等待中'},activeLinks:[],focus:{type:'node',id:'sender'},
+   note:'超时重传：发送方在 RTO 时间内未收到 ACK，判定报文丢失并执行重传。[简化演示：未展示 RTO 计算过程]'}},
+  {title:'第 5 步：超时重传报文段 2',desc:'RTO 超时后，发送方重新发送 seq=2000，此次传输成功。',
+   motions:[{id:'pkt2_retx',label:'seq=2000 重传',kind:'retransmit',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],delay:0,duration:1200,fields:{'序号 seq':2000,'数据长度':'1000 字节','备注':'超时重传'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000,'备注':'超时重传成功'}}],
+   nodeStates:{sender:'重传成功 ✓',receiver:'收到重传的 pkt2'},activeLinks:['main-link'],focus:{type:'packet',id:'pkt2_retx'},
+   note:'超时重传成功！紫色箭头表示重传报文。'}},
+  {title:'第 6 步：接收方确认 ACK=3000',desc:'接收方收到重传的报文段 2，发送累积确认 ACK=3000。',
+   motions:[{id:'ack2',label:'ACK=3000',kind:'ack',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],delay:0,duration:1000,fields:{'确认号 ack':3000,'标志位':'ACK=1'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000}},{id:'ack2',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],kind:'ack',label:'ACK=3000',status:'delivered',fields:{'确认号 ack':3000}}],
+   nodeStates:{sender:'收到 ACK=3000',receiver:'等待下一报文'},activeLinks:['main-link'],focus:{type:'packet',id:'ack2'},
+   note:'超时重传场景结束。接下来演示快速重传（Fast Retransmit）。'}},
+  {title:'第 7 步：连续发送报文段 3、4、5',desc:'发送方连续发送三个报文段，其中 seq=3000 将丢失。',
+   motions:[
+     {id:'pkt3',label:'seq=3000',kind:'data',path:[{x:SENDER_X,y:630},{x:520,y:660}],delay:0,duration:700,fields:{'序号 seq':3000,'备注':'将丢失'}},
+     {id:'pkt4',label:'seq=4000',kind:'data',path:[{x:SENDER_X,y:650},{x:RECEIVER_X,y:715}],delay:200,duration:1100,fields:{'序号 seq':4000}},
+     {id:'pkt5',label:'seq=5000',kind:'data',path:[{x:SENDER_X,y:670},{x:RECEIVER_X,y:735}],delay:400,duration:1100,fields:{'序号 seq':5000}}
+   ],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000}},{id:'ack2',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],kind:'ack',label:'ACK=3000',status:'delivered',fields:{'确认号 ack':3000}},{id:'pkt3',path:[{x:SENDER_X,y:630},{x:520,y:660}],kind:'data',label:'seq=3000',status:'lost',fields:{'序号 seq':3000,'状态':'丢失'}},{id:'pkt4',path:[{x:SENDER_X,y:650},{x:RECEIVER_X,y:715}],kind:'data',label:'seq=4000',status:'delivered',fields:{'序号 seq':4000}},{id:'pkt5',path:[{x:SENDER_X,y:670},{x:RECEIVER_X,y:735}],kind:'data',label:'seq=5000',status:'delivered',fields:{'序号 seq':5000}}],
+   nodeStates:{sender:'已发送 pkt3/4/5',receiver:'收到 pkt4/5（乱序）'},activeLinks:['main-link'],focus:{type:'packet',id:'pkt3'},
+   note:'报文段 3 丢失，但 4 和 5 成功到达（乱序）。[简化演示：忽略传播延迟差异]'}},
+  {title:'第 8 步：接收方发送 3 个重复 ACK',desc:'接收方收到乱序报文，发送重复 ACK=3000。',
+   motions:[{id:'dupack1',label:'ACK=3000 ×3',kind:'dupack',path:[{x:RECEIVER_X,y:765},{x:SENDER_X,y:830}],delay:0,duration:1000,fields:{'确认号 ack':3000,'重复次数':3,'含义':'通知发送方 seq=3000 丢失'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000}},{id:'ack2',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],kind:'ack',label:'ACK=3000',status:'delivered',fields:{'确认号 ack':3000}},{id:'pkt3',path:[{x:SENDER_X,y:630},{x:520,y:660}],kind:'data',label:'seq=3000',status:'lost',fields:{'序号 seq':3000,'状态':'丢失'}},{id:'pkt4',path:[{x:SENDER_X,y:650},{x:RECEIVER_X,y:715}],kind:'data',label:'seq=4000',status:'delivered',fields:{'序号 seq':4000}},{id:'pkt5',path:[{x:SENDER_X,y:670},{x:RECEIVER_X,y:735}],kind:'data',label:'seq=5000',status:'delivered',fields:{'序号 seq':5000}},{id:'dupack1',path:[{x:RECEIVER_X,y:765},{x:SENDER_X,y:830}],kind:'dupack',label:'ACK=3000 ×3',status:'delivered',fields:{'确认号 ack':3000,'重复次数':3}}],
+   nodeStates:{sender:'收到 3 个重复 ACK',receiver:'缓存 pkt4/5，等待 pkt3'},activeLinks:['main-link'],focus:{type:'packet',id:'dupack1'},
+   note:'快速重传触发条件：收到 3 个重复 ACK。[简化演示：合并为一步展示]'}},
+  {title:'第 9 步：快速重传报文段 3',desc:'收到 3 个重复 ACK 后，立即重传（无需等待 RTO）。',
+   motions:[{id:'pkt3_retx',label:'seq=3000 快速重传',kind:'retransmit',path:[{x:SENDER_X,y:860},{x:RECEIVER_X,y:920}],delay:0,duration:1200,fields:{'序号 seq':3000,'触发机制':'快速重传（3个重复ACK）','备注':'无需等待 RTO'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000}},{id:'ack2',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],kind:'ack',label:'ACK=3000',status:'delivered',fields:{'确认号 ack':3000}},{id:'pkt3',path:[{x:SENDER_X,y:630},{x:520,y:660}],kind:'data',label:'seq=3000',status:'lost',fields:{'序号 seq':3000,'状态':'丢失'}},{id:'pkt4',path:[{x:SENDER_X,y:650},{x:RECEIVER_X,y:715}],kind:'data',label:'seq=4000',status:'delivered',fields:{'序号 seq':4000}},{id:'pkt5',path:[{x:SENDER_X,y:670},{x:RECEIVER_X,y:735}],kind:'data',label:'seq=5000',status:'delivered',fields:{'序号 seq':5000}},{id:'dupack1',path:[{x:RECEIVER_X,y:765},{x:SENDER_X,y:830}],kind:'dupack',label:'ACK=3000 ×3',status:'delivered',fields:{'确认号 ack':3000,'重复次数':3}},{id:'pkt3_retx',path:[{x:SENDER_X,y:860},{x:RECEIVER_X,y:920}],kind:'retransmit',label:'seq=3000 快速重传',status:'delivered',fields:{'序号 seq':3000,'触发机制':'快速重传'}}],
+   nodeStates:{sender:'快速重传完成 ✓',receiver:'收到 pkt3，可交付上层'},activeLinks:['main-link'],focus:{type:'packet',id:'pkt3_retx'},
+   note:'快速重传：不等 RTO 超时，通过 3 个重复 ACK 快速检测丢包并立即重传，大幅减少恢复时间。'}},
+  {title:'第 10 步：累积确认 ACK=6000',desc:'接收方收到重传的 pkt3，交付全部数据，发送 ACK=6000。',
+   motions:[{id:'ack_final',label:'ACK=6000',kind:'ack',path:[{x:RECEIVER_X,y:940},{x:SENDER_X,y:975}],delay:0,duration:900,fields:{'确认号 ack':6000,'含义':'全部数据接收成功'}}],
+   state:{packets:[{id:'pkt1',path:[{x:SENDER_X,y:110},{x:RECEIVER_X,y:185}],kind:'data',label:'seq=1000',status:'delivered',fields:{'序号 seq':1000}},{id:'ack1',path:[{x:RECEIVER_X,y:215},{x:SENDER_X,y:285}],kind:'ack',label:'ACK=2000',status:'delivered',fields:{'确认号 ack':2000}},{id:'pkt2',path:[{x:SENDER_X,y:325},{x:520,y:355}],kind:'data',label:'seq=2000',status:'lost',fields:{'序号 seq':2000,'状态':'丢失'}},{id:'pkt2_retx',path:[{x:SENDER_X,y:425},{x:RECEIVER_X,y:495}],kind:'retransmit',label:'seq=2000 重传',status:'delivered',fields:{'序号 seq':2000}},{id:'ack2',path:[{x:RECEIVER_X,y:525},{x:SENDER_X,y:590}],kind:'ack',label:'ACK=3000',status:'delivered',fields:{'确认号 ack':3000}},{id:'pkt3',path:[{x:SENDER_X,y:630},{x:520,y:660}],kind:'data',label:'seq=3000',status:'lost',fields:{'序号 seq':3000,'状态':'丢失'}},{id:'pkt4',path:[{x:SENDER_X,y:650},{x:RECEIVER_X,y:715}],kind:'data',label:'seq=4000',status:'delivered',fields:{'序号 seq':4000}},{id:'pkt5',path:[{x:SENDER_X,y:670},{x:RECEIVER_X,y:735}],kind:'data',label:'seq=5000',status:'delivered',fields:{'序号 seq':5000}},{id:'dupack1',path:[{x:RECEIVER_X,y:765},{x:SENDER_X,y:830}],kind:'dupack',label:'ACK=3000 ×3',status:'delivered',fields:{'确认号 ack':3000,'重复次数':3}},{id:'pkt3_retx',path:[{x:SENDER_X,y:860},{x:RECEIVER_X,y:920}],kind:'retransmit',label:'seq=3000 快速重传',status:'delivered',fields:{'序号 seq':3000,'触发机制':'快速重传'}},{id:'ack_final',path:[{x:RECEIVER_X,y:940},{x:SENDER_X,y:975}],kind:'ack',label:'ACK=6000',status:'delivered',fields:{'确认号 ack':6000,'含义':'全部数据接收成功'}}],
+   nodeStates:{sender:'✅ 全部数据确认',receiver:'✅ 全部数据已交付'},activeLinks:[],focus:{type:'packet',id:'ack_final'},
+   note:'🎉 演示结束！超时重传恢复时间较长；快速重传（3个重复ACK触发）能更快恢复。两者配合确保 TCP 可靠传输。'}}
+];
+
+// ===== 全局状态 =====
+let currentIndex=0,isPlaying=false,isResetting=false,isAnimating=false;
+let animToken=0,speedMultiplier=1,currentFocus=null,currentTheme='light';
+
+// ===== 主题管理 =====
+function getCanvasColors(){
+  const s=getComputedStyle(document.documentElement),g=n=>s.getPropertyValue(n).trim();
+  return{data:g('--pkt-data'),ack:g('--pkt-ack'),lost:g('--pkt-lost'),retransmit:g('--pkt-retransmit'),dupack:g('--pkt-dupack'),text:g('--text'),textMuted:g('--text-muted'),bg:g('--bg'),diagramLine:g('--diagram-line'),diagramGrid:g('--diagram-grid'),diagramDot:g('--diagram-dot'),pktLabelLight:g('--pkt-label-light'),nodeBorder:g('--node-border'),nodeBg:g('--node-bg'),timeMarker:g('--time-marker'),vizBg:g('--viz-bg'),dataBg:g('--pkt-data-bg'),ackBg:g('--pkt-ack-bg'),lostBg:g('--pkt-lost-bg'),retransmitBg:g('--pkt-retransmit-bg'),dupackBg:g('--pkt-dupack-bg')};
+}
+function applyTheme(theme){
+  currentTheme=theme;
+  document.documentElement.setAttribute('data-theme',theme);
+  localStorage.setItem('tcp-demo-theme',theme);
+  document.getElementById('themeIcon').textContent=theme==='dark'?'☀️':'🌙';
+  document.getElementById('themeLabel').textContent=theme==='dark'?'浅色模式':'深色模式';
+  requestAnimationFrame(()=>renderCanvasFrame());
+}
+function toggleTheme(){applyTheme(currentTheme==='light'?'dark':'light')}
+function initTheme(){
+  const saved=localStorage.getItem('tcp-demo-theme');
+  if(saved==='dark'||saved==='light'){applyTheme(saved)}
+  else{applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',e=>{
+    if(!localStorage.getItem('tcp-demo-theme'))applyTheme(e.matches?'dark':'light');
+  });
+}
+
+// ===== SVG 构建 =====
+function buildSVG(){
+  const svg=document.getElementById('topologySvg'),ns='http://www.w3.org/2000/svg';
+  svg.innerHTML='';
+  
+  // 背景点阵网格
+  for(let x=50;x<LOGICAL_W;x+=50){
+    for(let y=50;y<LOGICAL_H;y+=50){
+      const dot=document.createElementNS(ns,'circle');
+      dot.setAttribute('cx',x);dot.setAttribute('cy',y);dot.setAttribute('r','1.5');
+      dot.setAttribute('fill','var(--diagram-dot)');dot.setAttribute('opacity','0.5');
+      svg.appendChild(dot);
+    }
+  }
+  
+  // 生命线（渐变效果用双层线模拟）
+  [[SENDER_X],[RECEIVER_X]].forEach(([x])=>{
+    const glow=document.createElementNS(ns,'line');
+    glow.setAttribute('x1',x);glow.setAttribute('y1',LIFELINE_TOP);
+    glow.setAttribute('x2',x);glow.setAttribute('y2',LIFELINE_BOTTOM);
+    glow.setAttribute('stroke','var(--diagram-line)');glow.setAttribute('stroke-width','6');
+    glow.setAttribute('stroke-linecap','round');glow.setAttribute('opacity','0.15');
+    svg.appendChild(glow);
+    
+    const line=document.createElementNS(ns,'line');
+    line.setAttribute('x1',x);line.setAttribute('y1',LIFELINE_TOP);
+    line.setAttribute('x2',x);line.setAttribute('y2',LIFELINE_BOTTOM);
+    line.setAttribute('stroke','var(--diagram-line)');line.setAttribute('stroke-width','2.5');
+    line.setAttribute('stroke-dasharray','6,6');line.setAttribute('stroke-linecap','round');
+    svg.appendChild(line);
+  });
+  
+  // 节点标签（徽章样式）
+  [[SENDER_X,'📤 发送方','--pkt-data'],[RECEIVER_X,'📥 接收方','--pkt-ack']].forEach(([x,label,colorVar])=>{
+    const bg=document.createElementNS(ns,'rect');
+    bg.setAttribute('x',x-70);bg.setAttribute('y',LIFELINE_TOP-48);
+    bg.setAttribute('width',140);bg.setAttribute('height',36);bg.setAttribute('rx',18);
+    bg.setAttribute('fill','var(--panel-bg)');bg.setAttribute('stroke','var(--border)');
+    bg.setAttribute('stroke-width','1.5');
+    svg.appendChild(bg);
+    
+    const txt=document.createElementNS(ns,'text');
+    txt.setAttribute('x',x);txt.setAttribute('y',LIFELINE_TOP-24);
+    txt.setAttribute('text-anchor','middle');txt.setAttribute('fill','var(--text)');
+    txt.setAttribute('font-size','18');txt.setAttribute('font-weight','700');
+    txt.textContent=label;
+    svg.appendChild(txt);
+  });
+  
+  // 节点状态文本
+  const ss=document.createElementNS(ns,'text');
+  ss.setAttribute('id','svg-sender-state');ss.setAttribute('x',SENDER_X);
+  ss.setAttribute('y',LIFELINE_TOP+30);ss.setAttribute('text-anchor','middle');
+  ss.setAttribute('fill','var(--text-muted)');ss.setAttribute('font-size','14');
+  ss.textContent='就绪';svg.appendChild(ss);
+  
+  const rs=document.createElementNS(ns,'text');
+  rs.setAttribute('id','svg-receiver-state');rs.setAttribute('x',RECEIVER_X);
+  rs.setAttribute('y',LIFELINE_TOP+30);rs.setAttribute('text-anchor','middle');
+  rs.setAttribute('fill','var(--text-muted)');rs.setAttribute('font-size','14');
+  rs.textContent='就绪';svg.appendChild(rs);
+  
+  // 节点圆形指示器（带光晕）
+  [[SENDER_X,'svg-sender-circle'],[RECEIVER_X,'svg-receiver-circle']].forEach(([x,id])=>{
+    const glow=document.createElementNS(ns,'circle');
+    glow.setAttribute('cx',x);glow.setAttribute('cy',LIFELINE_TOP);glow.setAttribute('r','16');
+    glow.setAttribute('fill','var(--pkt-ack)');glow.setAttribute('opacity','0.2');
+    svg.appendChild(glow);
+    
+    const c=document.createElementNS(ns,'circle');
+    c.setAttribute('id',id);c.setAttribute('cx',x);c.setAttribute('cy',LIFELINE_TOP);c.setAttribute('r','9');
+    c.setAttribute('fill','var(--pkt-ack)');c.setAttribute('stroke','var(--panel-bg)');
+    c.setAttribute('stroke-width','3');
+    svg.appendChild(c);
+  });
+  
+  // 时间方向
+  const ta=document.createElementNS(ns,'text');
+  ta.setAttribute('x','40');ta.setAttribute('y','500');
+  ta.setAttribute('fill','var(--time-marker)');ta.setAttribute('font-size','14');
+  ta.setAttribute('writing-mode','vertical-rl');ta.setAttribute('text-anchor','middle');
+  ta.setAttribute('letter-spacing','4');
+  ta.textContent='时 间';svg.appendChild(ta);
+  
+  // 场景分隔
+  [[390,'超时重传场景'],[610,'快速重传场景']].forEach(([y,label])=>{
+    const l=document.createElementNS(ns,'line');
+    l.setAttribute('x1','90');l.setAttribute('y1',y);l.setAttribute('x2','910');l.setAttribute('y2',y);
+    l.setAttribute('stroke','var(--diagram-grid)');l.setAttribute('stroke-width','1.5');
+    l.setAttribute('stroke-dasharray','8,6');
+    svg.appendChild(l);
+    
+    const t=document.createElementNS(ns,'text');
+    t.setAttribute('x','920');t.setAttribute('y',y+5);
+    t.setAttribute('fill','var(--time-marker)');t.setAttribute('font-size','13');
+    t.setAttribute('text-anchor','end');t.setAttribute('font-weight','500');
+    t.textContent=label;svg.appendChild(t);
+  });
+}
+
+function updateSVGNodeStates(ns){
+  const s=document.getElementById('svg-sender-state'),r=document.getElementById('svg-receiver-state');
+  if(s)s.textContent=ns.sender||'';
+  if(r)r.textContent=ns.receiver||'';
+}
+
+// ===== Canvas 渲染 =====
+let canvas=null,ctx=null,activeMotions=[],motionStartTime=0;
+
+function resizeCanvas(){
+  canvas=document.getElementById('packetCanvas');
+  ctx=canvas.getContext('2d');
+  const c=document.getElementById('vizContainer'),dpr=window.devicePixelRatio||1;
+  const dw=c.clientWidth,dh=c.clientHeight;
+  canvas.width=dw*dpr;canvas.height=dh*dpr;
+  canvas.style.width=dw+'px';canvas.style.height=dh+'px';
+  ctx.setTransform(dpr*dw/LOGICAL_W,0,0,dpr*dh/LOGICAL_H,0,0);
+  renderCanvasFrame();
+}
+
+function getPacketColor(kind,colors){
+  const map={data:colors.data,ack:colors.ack,lost:colors.lost,retransmit:colors.retransmit,dupack:colors.dupack};
+  return map[kind]||colors.data;
+}
+function getPacketBg(kind,colors){
+  const map={data:colors.dataBg,ack:colors.ackBg,lost:colors.lostBg,retransmit:colors.retransmitBg,dupack:colors.dupackBg};
+  return map[kind]||colors.dataBg;
+}
+
+function drawArrowhead(ctx,fx,fy,tx,ty,color,size=16){
+  const a=Math.atan2(ty-fy,tx-fx);
+  ctx.beginPath();ctx.fillStyle=color;
+  ctx.moveTo(tx,ty);
+  ctx.lineTo(tx-size*Math.cos(a-Math.PI/6),ty-size*Math.sin(a-Math.PI/6));
+  ctx.lineTo(tx-size*Math.cos(a+Math.PI/6),ty-size*Math.sin(a+Math.PI/6));
+  ctx.closePath();ctx.fill();
+}
+
+function drawCompletedPacket(pkt,colors){
+  const{path,label,kind,status}=pkt;
+  if(!path||path.length<2)return;
+  const start=path[0],end=path[path.length-1];
+  const color=getPacketColor(kind,colors);
+  ctx.save();
+  
+  if(status==='lost'){
+    // 丢失：虚线 + 爆炸效果
+    ctx.beginPath();ctx.strokeStyle=colors.lost;ctx.lineWidth=3;
+    ctx.setLineDash([12,8]);ctx.moveTo(start.x,start.y);ctx.lineTo(end.x,end.y);ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // 爆炸星号
+    const cx=end.x,cy=end.y,r=22;
+    ctx.strokeStyle=colors.lost;ctx.lineWidth=3.5;ctx.lineCap='round';
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4;
+      ctx.beginPath();
+      ctx.moveTo(cx+r*0.4*Math.cos(a),cy+r*0.4*Math.sin(a));
+      ctx.lineTo(cx+r*Math.cos(a),cy+r*Math.sin(a));
+      ctx.stroke();
+    }
+    
+    ctx.fillStyle=colors.lost;ctx.font='bold 17px sans-serif';
+    ctx.textAlign='left';ctx.textBaseline='bottom';
+    ctx.fillText(label+' ✗',start.x+25,(start.y+end.y)/2-10);
+  }else{
+    // 正常：实线 + 箭头 + 胶囊标签
+    ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=3;ctx.lineCap='round';
+    ctx.moveTo(start.x,start.y);
+    for(let i=1;i<path.length;i++)ctx.lineTo(path[i].x,path[i].y);
+    ctx.stroke();
+    
+    const last={f:path[path.length-2],t:path[path.length-1]};
+    drawArrowhead(ctx,last.f.x,last.f.y,last.t.x,last.t.y,color,16);
+    
+    const mx=(start.x+end.x)/2,my=(start.y+end.y)/2;
+    ctx.font='bold 15px sans-serif';
+    const tw=ctx.measureText(label).width,pad=12;
+    const rw=tw+pad*2,rh=28;
+    
+    // 胶囊背景
+    ctx.fillStyle=getPacketBg(kind,colors);
+    ctx.strokeStyle=color;ctx.lineWidth=2;
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(mx-rw/2,my-rh/2-8,rw,rh,14);
+    else ctx.rect(mx-rw/2,my-rh/2-8,rw,rh);
+    ctx.fill();ctx.stroke();
+    
+    ctx.fillStyle=color;ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(label,mx,my-8+1);
+  }
+  ctx.restore();
+}
+
+function drawMotionPacket(motion,progress,colors){
+  const{path,label,kind}=motion;
+  if(!path||path.length<2)return;
+  const color=getPacketColor(kind,colors);
+  const pos=interpolatePath(path,progress);
+  const start=path[0],end=path[path.length-1];
+  ctx.save();
+  
+  // 拖尾
+  ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=2.5;
+  ctx.globalAlpha=0.3;ctx.moveTo(start.x,start.y);ctx.lineTo(pos.x,pos.y);ctx.stroke();
+  ctx.globalAlpha=1;
+  
+  // 发光效果
+  ctx.shadowColor=color;ctx.shadowBlur=12;
+  
+  // 胶囊主体
+  const angle=Math.atan2(end.y-start.y,end.x-start.x);
+  ctx.save();ctx.translate(pos.x,pos.y);ctx.rotate(angle);
+  const w=Math.max(90,label.length*12+30),h=30;
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  if(ctx.roundRect)ctx.roundRect(-w/2,-h/2,w,h,15);
+  else ctx.rect(-w/2,-h/2,w,h);
+  ctx.fill();
+  ctx.restore();
+  
+  ctx.shadowBlur=0;
+  
+  // 水平标签
+  ctx.font='bold 14px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillStyle=colors.pktLabelLight;
+  ctx.fillText(label,pos.x,pos.y+1);
+  
+  ctx.restore();
+}
+
+function renderCanvasFrame(){
+  if(!ctx||!canvas)return;
+  const colors=getCanvasColors();
+  ctx.clearRect(0,0,LOGICAL_W,LOGICAL_H);
+  
+  const st=currentIndex>=0&&currentIndex<steps.length?steps[currentIndex].state:initialState;
+  const animIds=new Set(activeMotions.map(m=>m.id));
+  
+  if(st.packets){
+    for(const pkt of st.packets){
+      if(isAnimating&&animIds.has(pkt.id))continue;
+      drawCompletedPacket(pkt,colors);
+    }
+  }
+  
+  if(isAnimating&&activeMotions.length>0){
+    const elapsed=(performance.now()-motionStartTime)*speedMultiplier;
+    for(const m of activeMotions){
+      const me=elapsed-(m.delay||0);
+      if(me<0)continue;
+      drawMotionPacket(m,Math.min(1,me/m.duration),colors);
+    }
+  }
+}
+
+// ===== renderState =====
+function renderState(state){
+  if(state.focus){currentFocus=state.focus;updateInfoPanel(state.focus,state)}
+  else{currentFocus=null;clearInfoPanel()}
+  updateSVGNodeStates(state.nodeStates||{});
+  const step=steps[currentIndex];
+  if(step){
+    document.getElementById('stepTitle').textContent=step.title;
+    document.getElementById('stepDesc').textContent=step.desc;
+    const n=document.getElementById('stepNote');
+    if(state.note){n.textContent=state.note;n.style.display='block'}
+    else n.style.display='none';
+  }
+  renderCanvasFrame();
+}
+
+// ===== 信息面板 =====
+function updateInfoPanel(focus,state){
+  const c=document.getElementById('infoContent');
+  if(focus.type==='node'){
+    const node=NODES.find(n=>n.id===focus.id);
+    if(!node){clearInfoPanel();return}
+    c.innerHTML=`<div class="info-title">🖥️ ${node.label}（${node.role}）</div>
+    <div class="info-fields"><span class="field-key">状态</span><span class="field-value">${state.nodeStates?.[node.id]||'未知'}</span>
+    <span class="field-key">说明</span><span class="field-value">${node.description}</span></div>`;
+  }else if(focus.type==='packet'){
+    const pkt=state.packets?.find(p=>p.id===focus.id);
+    if(!pkt){clearInfoPanel();return}
+    let h='';
+    for(const[k,v]of Object.entries(pkt.fields||{}))h+=`<span class="field-key">${k}</span><span class="field-value">${v}</span>`;
+    c.innerHTML=`<div class="info-title">📦 ${pkt.label}</div><div class="info-fields">${h||'<span class="empty-msg">无字段</span>'}</div>`;
+  }
+}
+function clearInfoPanel(){
+  document.getElementById('infoContent').innerHTML='<p class="empty-msg">🖱️ 点击时空图中的数据包或节点查看详情</p>';
+}
+
+// ===== 动画层 =====
+let rafId=null;
+function playMotions(motions,token){
+  return new Promise(resolve=>{
+    if(!motions||!motions.length){resolve();return}
+    activeMotions=motions;motionStartTime=performance.now();isAnimating=true;
+    const total=Math.max(...motions.map(m=>(m.delay||0)+m.duration));
+    function tick(){
+      if(token!==animToken){isAnimating=false;activeMotions=[];renderCanvasFrame();resolve();return}
+      renderCanvasFrame();
+      if((performance.now()-motionStartTime)*speedMultiplier>=total){
+        isAnimating=false;activeMotions=[];renderCanvasFrame();resolve();return;
+      }
+      rafId=requestAnimationFrame(tick);
+    }
+    rafId=requestAnimationFrame(tick);
+  });
+}
+
+// ===== goToStep =====
+async function goToStep(index,opts={}){
+  const{animate=false}=opts;
+  index=Math.max(0,Math.min(steps.length-1,index));
+  if(index===currentIndex&&!animate)return;
+  const token=++animToken;
+  if(rafId){cancelAnimationFrame(rafId);rafId=null}
+  isAnimating=false;activeMotions=[];
+  currentIndex=index;
+  updateControls();updateStepProgress();
+  const step=steps[currentIndex];
+  if(!step)return;
+  if(animate&&step.motions&&step.motions.length>0){
+    renderState(currentIndex>0?steps[currentIndex-1].state:initialState);
+    await playMotions(step.motions,token);
+    if(token!==animToken)return;
+  }
+  renderState(step.state);
+}
+
+// ===== 播放控制 =====
+async function stepForward(){
+  if(isResetting||currentIndex>=steps.length-1)return;
+  if(isPlaying)isPlaying=false;
+  await goToStep(currentIndex+1,{animate:true});
+  updateControls();
+}
+async function stepBackward(){
+  if(isResetting||currentIndex<=0)return;
+  if(isPlaying){isPlaying=false;animToken++}
+  await goToStep(currentIndex-1,{animate:false});
+  updateControls();
+}
+async function play(){
+  if(isResetting||currentIndex>=steps.length-1)return;
+  isPlaying=true;updateControls();
+  while(isPlaying&&currentIndex<steps.length-1){
+    await goToStep(currentIndex+1,{animate:true});
+    if(!isPlaying)break;
+    await delay(STEP_PAUSE_BASE/speedMultiplier);
+    if(!isPlaying)break;
+  }
+  isPlaying=false;updateControls();
+}
+function pause(){
+  isPlaying=false;animToken++;isAnimating=false;activeMotions=[];
+  if(rafId){cancelAnimationFrame(rafId);rafId=null}
+  const step=steps[currentIndex];
+  if(step)renderState(step.state);
+  updateControls();
+}
+function togglePlay(){
+  if(isResetting)return;
+  isPlaying?pause():play();
+}
+async function reset(){
+  isResetting=true;isPlaying=false;animToken++;isAnimating=false;activeMotions=[];
+  if(rafId){cancelAnimationFrame(rafId);rafId=null}
+  currentIndex=0;updateStepProgress();updateControls();
+  renderState(initialState);updateSVGNodeStates(initialState.nodeStates);
+  document.getElementById('stepTitle').textContent='准备就绪';
+  document.getElementById('stepDesc').textContent='点击"播放"或"下一步"开始演示。';
+  document.getElementById('stepNote').textContent=initialState.note;
+  document.getElementById('stepNote').style.display='block';
+  clearInfoPanel();
+  await delay(200);isResetting=false;updateControls();
+}
+
+// ===== UI 同步 =====
+function updateControls(){
+  const bp=document.getElementById('btnPrev'),bs=document.getElementById('btnStep'),
+        bpl=document.getElementById('btnPlay'),br=document.getElementById('btnReset');
+  bp.disabled=currentIndex<=0||isResetting;
+  bs.disabled=currentIndex>=steps.length-1||isResetting||isPlaying;
+  if(isPlaying){bpl.textContent='⏸ 暂停';bpl.classList.remove('primary');bpl.disabled=false}
+  else{bpl.textContent='▶ 播放';bpl.classList.add('primary');bpl.disabled=currentIndex>=steps.length-1||isResetting}
+  br.disabled=false;
+}
+function updateStepProgress(){
+  const t=steps.length,c=currentIndex+1;
+  document.getElementById('progressText').textContent=`${c} / ${t}`;
+  document.getElementById('progressFill').style.width=`${c/t*100}%`;
+}
+
+// ===== 交互绑定 =====
+function handleCanvasClick(e){
+  const rect=canvas.getBoundingClientRect();
+  const sx=LOGICAL_W/rect.width,sy=LOGICAL_H/rect.height;
+  const cx=(e.clientX-rect.left)*sx,cy=(e.clientY-rect.top)*sy;
+  const st=currentIndex>=0&&currentIndex<steps.length?steps[currentIndex].state:initialState;
+  const pkts=st.packets||[];
+  for(let i=pkts.length-1;i>=0;i--){
+    const p=pkts[i];
+    if(!p.path||p.path.length<2)continue;
+    const s=p.path[0],en=p.path[p.path.length-1];
+    if(pointToSegmentDist(cx,cy,s.x,s.y,en.x,en.y)<30){
+      currentFocus={type:'packet',id:p.id};updateInfoPanel(currentFocus,st);return;
+    }
+  }
+  for(const n of NODES){
+    if(Math.hypot(cx-n.x,cy-n.y)<45){
+      currentFocus={type:'node',id:n.id};updateInfoPanel(currentFocus,st);return;
+    }
+  }
+  currentFocus=null;clearInfoPanel();
+}
+
+function bindInteractions(){
+  document.getElementById('btnPrev').addEventListener('click',function(){this.blur();flashButton('btnPrev');stepBackward()});
+  document.getElementById('btnStep').addEventListener('click',function(){this.blur();flashButton('btnStep');stepForward()});
+  document.getElementById('btnPlay').addEventListener('click',function(){this.blur();flashButton('btnPlay');togglePlay()});
+  document.getElementById('btnReset').addEventListener('click',function(){this.blur();flashButton('btnReset');reset()});
+  document.getElementById('themeToggle').addEventListener('click',function(){this.blur();toggleTheme()});
+  document.getElementById('speedSelect').addEventListener('change',e=>{speedMultiplier=parseFloat(e.target.value)});
+  canvas.addEventListener('click',handleCanvasClick);
+  let lastDpr=window.devicePixelRatio;
+  window.addEventListener('resize',()=>{
+    if(window.devicePixelRatio!==lastDpr)lastDpr=window.devicePixelRatio;
+    resizeCanvas();
+  });
+}
+function flashButton(id){
+  const b=document.getElementById(id);
+  if(!b||b.disabled)return;
+  b.classList.remove('flash');void b.offsetWidth;b.classList.add('flash');
+  setTimeout(()=>b.classList.remove('flash'),350);
+}
+
+// ===== 快捷键 =====
+function isInputElement(el){
+  if(!el)return false;
+  const t=el.tagName.toLowerCase();
+  return t==='input'||t==='textarea'||t==='select'||el.isContentEditable;
+}
+function bindShortcuts(){
+  document.addEventListener('keydown',e=>{
+    if(isInputElement(document.activeElement))return;
+    const key=e.key,code=e.code;
+    let action=SHORTCUTS[key];
+    if(!action&&code==='Space')action='togglePlay';
+    if(!action)return;
+    if(key===' '||key==='ArrowLeft'||key==='ArrowRight'||code==='Space'){
+      e.preventDefault();e.stopPropagation();
+    }
+    switch(action){
+      case'togglePlay':flashButton('btnPlay');togglePlay();break;
+      case'stepForward':flashButton('btnStep');stepForward();break;
+      case'stepBackward':flashButton('btnPrev');stepBackward();break;
+      case'reset':flashButton('btnReset');reset();break;
+      case'toggleTheme':toggleTheme();break;
+    }
+  });
+}
+
+// ===== 初始化 =====
+function init(){
+  initTheme();buildSVG();resizeCanvas();bindInteractions();bindShortcuts();
+  renderState(initialState);updateSVGNodeStates(initialState.nodeStates);
+  document.getElementById('stepTitle').textContent='准备就绪';
+  document.getElementById('stepDesc').textContent='点击"播放"或"下一步"开始演示。';
+  document.getElementById('stepNote').textContent=initialState.note;
+  document.getElementById('stepNote').style.display='block';
+  updateStepProgress();updateControls();
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
+else init();
+</script>
+</body>
+</html>
