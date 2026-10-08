@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TCP 发送窗口与滑动机制演示（四类事件驱动）</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-secondary: #f8f9fa;
+      --text: #1a1a1a;
+      --text-secondary: #555555;
+      --border: #dee2e6;
+      --node-bg: #e3f2fd;
+      --node-border: #1976d2;
+      --link-color: #bdbdbd;
+      --accent: #1976d2;
+      --pkt-data: #1976d2;
+      --pkt-ack: #388e3c;
+      --pkt-lost: #d32f2f;
+      --pkt-retransmit: #f57c00;
+      --seg-acked: #66bb6a;
+      --seg-inflight: #42a5f5;
+      --seg-window: #ffca28;
+      --seg-outside: #9e9e9e;
+      --seg-lost: #ef5350;
+      --seg-retransmit: #ffa726;
+      --btn-bg: #1976d2;
+      --btn-text: #ffffff;
+      --btn-disabled-bg: #e0e0e0;
+      --btn-disabled-text: #9e9e9e;
+      --note-bg: rgba(25, 118, 210, 0.08);
+      --note-border: #1976d2;
+      --event-bg: rgba(25, 118, 210, 0.12);
+    }
+    [data-theme="dark"] {
+      --bg: #121212;
+      --bg-secondary: #1e1e1e;
+      --text: #e0e0e0;
+      --text-secondary: #b0b0b0;
+      --border: #424242;
+      --node-bg: #1a3a52;
+      --node-border: #64b5f6;
+      --link-color: #616161;
+      --accent: #64b5f6;
+      --pkt-data: #64b5f6;
+      --pkt-ack: #81c784;
+      --pkt-lost: #e57373;
+      --pkt-retransmit: #ffb74d;
+      --seg-acked: #81c784;
+      --seg-inflight: #64b5f6;
+      --seg-window: #ffd54f;
+      --seg-outside: #757575;
+      --seg-lost: #e57373;
+      --seg-retransmit: #ffb74d;
+      --btn-bg: #64b5f6;
+      --btn-text: #121212;
+      --btn-disabled-bg: #424242;
+      --btn-disabled-text: #757575;
+      --note-bg: rgba(100, 181, 246, 0.12);
+      --note-border: #64b5f6;
+      --event-bg: rgba(100, 181, 246, 0.15);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      transition: background-color 0.3s, color 0.3s;
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    #app { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+    h1 { font-size: 24px; color: var(--text); }
+    button {
+      background: var(--btn-bg); color: var(--btn-text); border: none; padding: 8px 16px;
+      border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
+      transition: opacity 0.2s, background-color 0.3s, color 0.3s, transform 0.1s;
+    }
+    button:disabled { background: var(--btn-disabled-bg); color: var(--btn-disabled-text); cursor: not-allowed; opacity: 0.7; }
+    button:not(:disabled):hover { opacity: 0.85; }
+    button:not(:disabled):active { transform: scale(0.97); }
+    button.flash { animation: flashBtn 0.25s ease; }
+    @keyframes flashBtn { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; transform: scale(0.95); } }
+    #theme-toggle { min-width: 110px; }
+    #step-info {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; margin-bottom: 20px; transition: background-color 0.3s, border-color 0.3s;
+    }
+    #step-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: var(--accent); }
+    #event-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
+      font-weight: 600; margin-bottom: 8px; background: var(--event-bg); color: var(--accent);
+    }
+    #step-desc { color: var(--text); margin-bottom: 12px; line-height: 1.6; }
+    #step-note {
+      background: var(--note-bg); border-left: 3px solid var(--note-border);
+      padding: 10px 14px; margin-bottom: 12px; font-size: 14px; white-space: pre-line;
+      border-radius: 0 4px 4px 0; color: var(--text);
+    }
+    #progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
+    #progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+    #step-progress { font-size: 13px; color: var(--text-secondary); }
+    main { display: grid; grid-template-columns: 1fr 300px; gap: 20px; margin-bottom: 20px; }
+    #stage {
+      position: relative; background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; min-height: 500px;
+      transition: background-color 0.3s, border-color 0.3s;
+    }
+    #topology, #packets { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+    #topology { z-index: 1; }
+    #packets { z-index: 2; }
+    #info-panel {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; transition: background-color 0.3s, border-color 0.3s;
+    }
+    #info-panel h3 { margin-bottom: 12px; font-size: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    #info-content h4 { margin-bottom: 10px; font-size: 16px; color: var(--accent); }
+    #info-content p { margin-bottom: 6px; font-size: 14px; line-height: 1.5; }
+    #info-content .field-key { font-weight: 600; color: var(--text); margin-right: 6px; }
+    #controls { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+    #speed-control { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    #speed-slider { width: 120px; cursor: pointer; }
+    #speed-value { font-size: 14px; min-width: 40px; color: var(--text-secondary); }
+    #legend {
+      display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; padding: 14px;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      transition: background-color 0.3s, border-color 0.3s;
+    }
+    #legend h3 { width: 100%; font-size: 14px; margin-bottom: 6px; color: var(--text-secondary); }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    .legend-color { width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--border); }
+    #shortcuts {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px; margin-bottom: 20px; transition: background-color 0.3s, border-color 0.3s;
+    }
+    #shortcuts h3 { font-size: 14px; margin-bottom: 8px; color: var(--text-secondary); }
+    #shortcuts ul { list-style: none; }
+    #shortcuts li { margin-bottom: 4px; font-size: 13px; }
+    kbd {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+      padding: 1px 6px; font-size: 12px; font-family: "SF Mono", Monaco, Consolas, monospace;
+      box-shadow: 0 1px 0 var(--border);
+    }
+    #simplification-notes {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px; transition: background-color 0.3s, border-color 0.3s;
+    }
+    #simplification-notes h3 { font-size: 14px; margin-bottom: 8px; color: var(--text-secondary); }
+    #simplification-notes ul { margin-left: 20px; }
+    #simplification-notes li { margin-bottom: 4px; font-size: 13px; line-height: 1.5; }
+    .node { cursor: pointer; }
+    .node:hover circle { stroke-width: 4; }
+    .link { transition: stroke 0.3s, stroke-width 0.3s; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      #controls { justify-content: center; }
+      #speed-control { margin-left: 0; width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>🌐 TCP 发送窗口与滑动机制演示（四类事件驱动）</h1>
+      <button id="theme-toggle" title="切换主题 (T)">🌙 切换暗色</button>
+    </header>
+
+    <div id="step-info">
+      <div id="event-badge"></div>
+      <div id="step-title">加载中...</div>
+      <div id="step-desc"></div>
+      <div id="step-note"></div>
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <div id="step-progress"></div>
+    </div>
+
+    <main>
+      <div id="stage">
+        <svg id="topology" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet"></svg>
+        <canvas id="packets"></canvas>
+      </div>
+      <aside id="info-panel">
+        <h3>信息面板</h3>
+        <div id="info-content"><p>点击节点或数据包查看详细信息</p></div>
+      </aside>
+    </main>
+
+    <div id="controls">
+      <button id="btn-reset" title="重置 (R)">⏮ 重置</button>
+      <button id="btn-prev" title="上一步 (A/←)">◀ 上一步</button>
+      <button id="btn-play" title="播放/暂停 (空格)">▶ 播放</button>
+      <button id="btn-step" title="单步执行 (S/→)">单步执行 ▶</button>
+      <div id="speed-control">
+        <label for="speed-slider">速度:</label>
+        <input type="range" id="speed-slider" min="0.25" max="3" step="0.25" value="1">
+        <span id="speed-value">1×</span>
+      </div>
+    </div>
+
+    <div id="legend">
+      <h3>图例 - 窗口状态</h3>
+      <div class="legend-item"><div class="legend-color" style="background: var(--seg-acked)"></div><span>已确认</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--seg-inflight)"></div><span>已发送未确认</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--seg-window)"></div><span>窗口内未发送</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--seg-outside)"></div><span>窗口外</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--seg-retransmit)"></div><span>重传中</span></div>
+    </div>
+
+    <div id="legend" style="margin-top: 0;">
+      <h3>图例 - 报文类型</h3>
+      <div class="legend-item"><div class="legend-color" style="background: var(--pkt-data)"></div><span>数据报文</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--pkt-ack)"></div><span>ACK 确认</span></div>
+      <div class="legend-item"><div class="legend-color" style="background: var(--pkt-retransmit)"></div><span>重传报文</span></div>
+    </div>
+
+    <div id="shortcuts">
+      <h3>⌨️ 快捷键</h3>
+      <ul>
+        <li><kbd>空格</kbd> 播放 / 暂停</li>
+        <li><kbd>S</kbd> 或 <kbd>→</kbd> 单步执行（下一步）</li>
+        <li><kbd>A</kbd> 或 <kbd>←</kbd> 上一步</li>
+        <li><kbd>R</kbd> 重置</li>
+        <li><kbd>T</kbd> 切换主题</li>
+      </ul>
+    </div>
+
+    <div id="simplification-notes">
+      <h3>📝 教学简化说明</h3>
+      <ul>
+        <li><strong>此处为简化演示：</strong>实际 TCP 使用字节流序号，本演示使用报文段序号便于理解。</li>
+        <li><strong>此处为简化演示：</strong>未展示拥塞控制 (cwnd) 机制，仅演示接收窗口 (rwnd) 的滑动。</li>
+        <li><strong>此处为简化演示：</strong>超时时间 (RTO) 固定，未使用 TCP 的 RTT 动态估算算法。</li>
+        <li><strong>此处为简化演示：</strong>TCP 一个连接只有一个定时器，只给最老的未确认段计时。</li>
+        <li><strong>此处为简化演示：</strong>未展示 TCP 选项字段、校验和及流量控制的细节。</li>
+        <li><strong>此处为简化演示：</strong>接收方缓冲区大小固定，未展示窗口通告的动态变化。</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    /* ================================================================
+     *  1. 常量与工具
+     * ================================================================ */
+    const COORD = { w: 1000, h: 500 };
+    const SEGMENT_COUNT = 12;
+    const SEGMENT_W = 50;
+    const SEGMENT_H = 36;
+    const SEGMENT_GAP = 2;
+    const WINDOW_Y = 380;
+    const WINDOW_X_START = 85;
+
+    function interpolatePath(path, progress) {
+      let totalLen = 0;
+      const segs = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        const dx = path[i+1].x - path[i].x;
+        const dy = path[i+1].y - path[i].y;
+        const len = Math.sqrt(dx*dx + dy*dy);
+        segs.push({ s: path[i], e: path[i+1], len });
+        totalLen += len;
+      }
+      if (totalLen === 0) return { x: path[0].x, y: path[0].y };
+      const target = progress * totalLen;
+      let acc = 0;
+      for (const seg of segs) {
+        if (acc + seg.len >= target) {
+          const p = (target - acc) / seg.len;
+          return { x: seg.s.x + (seg.e.x - seg.s.x) * p, y: seg.s.y + (seg.e.y - seg.s.y) * p };
+        }
+        acc += seg.len;
+      }
+      return { x: path[path.length-1].x, y: path[path.length-1].y };
+    }
+
+    function getCSSVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+    /* ================================================================
+     *  2. 拓扑定义
+     * ================================================================ */
+    const NODES = {
+      sender:   { x: 150, y: 120, label: '发送方', role: 'TCP 发送端', desc: '维护发送窗口、发送缓冲区和重传定时器' },
+      receiver: { x: 850, y: 120, label: '接收方', role: 'TCP 接收端', desc: '接收数据，发送累积 ACK' }
+    };
+
+    const LINKS = {
+      link1: { from: 'sender', to: 'receiver', label: 'TCP 连接' }
+    };
+
+    /* ================================================================
+     *  3. steps 数据（四类事件驱动）
+     * ================================================================ */
+    function buildSegments(base, nextseq, rwnd, extras = {}) {
+      const segs = [];
+      for (let i = 0; i < SEGMENT_COUNT; i++) {
+        let status;
+        if (extras[i]) status = extras[i];
+        else if (i < base) status = 'acked';
+        else if (i < nextseq) status = 'inflight';
+        else if (i < base + rwnd) status = 'window';
+        else status = 'outside';
+        segs.push({ seq: i, status });
+      }
+      return segs;
+    }
+
+    const steps = [
+      {
+        title: '第 1 步：初始化发送窗口',
+        eventType: '初始状态',
+        desc: 'TCP 连接建立后，发送方初始化发送窗口。SendBase = 0，NextSeqNum = 0，窗口大小 (rwnd) = 4。定时器未运行，发送缓冲区为空。',
+        motions: [],
+        state: {
+          packets: [],
+          nodeStates: { sender: '就绪', receiver: '就绪' },
+          activeLinks: [],
+          focus: { type: 'node', id: 'sender' },
+          note: '发送窗口 = [SendBase, SendBase + rwnd) = [0, 4)\n定时器：未运行\n发送缓冲区：空',
+          windowState: { base: 0, nextseq: 0, rwnd: 4, segments: buildSegments(0, 0, 4) },
+          timerState: { running: false, forSegment: null },
+          bufferState: [],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 2 步：上层交来数据（段 0）',
+        eventType: '事件 1：上层交来数据',
+        desc: '应用层交来段 0。以 NextSeqNum=0 为序号创建段，立即发出。NextSeqNum 更新为 1（前沿前移）。定时器未运行，启动定时器（给段 0 计时）。',
+        motions: [
+          { id: 'p0', label: 'DATA 0', kind: 'data', path: [{x:192,y:120},{x:808,y:120}], delay: 0, duration: 1000, fields: { '序号 seq': 0, '数据': 'Segment 0' } }
+        ],
+        state: {
+          packets: [
+            { id: 'p0', kind: 'data', label: 'DATA 0', x: 808, y: 120, fields: { '序号 seq': 0, '数据': 'Segment 0' } }
+          ],
+          nodeStates: { sender: '发送中', receiver: '接收中' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p0' },
+          note: '事件 1：上层交来数据\n→ 创建段 0，发出\n→ NextSeqNum: 0 → 1（前沿前移）\n→ 定时器未运行 → 启动定时器（给段 0 计时）',
+          windowState: { base: 0, nextseq: 1, rwnd: 4, segments: buildSegments(0, 1, 4) },
+          timerState: { running: true, forSegment: 0 },
+          bufferState: [0],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 3 步：上层交来数据（段 1）',
+        eventType: '事件 1：上层交来数据',
+        desc: '应用层交来段 1。以 NextSeqNum=1 为序号创建段，立即发出。NextSeqNum 更新为 2（前沿前移）。定时器已在运行（给段 0 计时），不重启。',
+        motions: [
+          { id: 'p1', label: 'DATA 1', kind: 'data', path: [{x:192,y:145},{x:808,y:145}], delay: 0, duration: 1000, fields: { '序号 seq': 1, '数据': 'Segment 1' } }
+        ],
+        state: {
+          packets: [
+            { id: 'p1', kind: 'data', label: 'DATA 1', x: 808, y: 145, fields: { '序号 seq': 1, '数据': 'Segment 1' } }
+          ],
+          nodeStates: { sender: '发送中', receiver: '接收中' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p1' },
+          note: '事件 1：上层交来数据\n→ 创建段 1，发出\n→ NextSeqNum: 1 → 2（前沿前移）\n→ 定时器已在运行 → 不重启（仍给段 0 计时）',
+          windowState: { base: 0, nextseq: 2, rwnd: 4, segments: buildSegments(0, 2, 4) },
+          timerState: { running: true, forSegment: 0 },
+          bufferState: [0, 1],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 4 步：上层交来数据（段 2、段 3）',
+        eventType: '事件 1：上层交来数据',
+        desc: '应用层交来段 2 和段 3。分别以 NextSeqNum=2 和 NextSeqNum=3 为序号创建段，立即发出。NextSeqNum 更新为 4（前沿前移）。定时器已在运行，不重启。',
+        motions: [
+          { id: 'p2', label: 'DATA 2', kind: 'data', path: [{x:192,y:170},{x:808,y:170}], delay: 0, duration: 1000, fields: { '序号 seq': 2, '数据': 'Segment 2' } },
+          { id: 'p3', label: 'DATA 3', kind: 'data', path: [{x:192,y:195},{x:808,y:195}], delay: 200, duration: 1000, fields: { '序号 seq': 3, '数据': 'Segment 3' } }
+        ],
+        state: {
+          packets: [
+            { id: 'p2', kind: 'data', label: 'DATA 2', x: 808, y: 170, fields: { '序号 seq': 2, '数据': 'Segment 2' } },
+            { id: 'p3', kind: 'data', label: 'DATA 3', x: 808, y: 195, fields: { '序号 seq': 3, '数据': 'Segment 3' } }
+          ],
+          nodeStates: { sender: '发送中', receiver: '接收中' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p2' },
+          note: '事件 1：上层交来数据\n→ 创建段 2、段 3，发出\n→ NextSeqNum: 2 → 4（前沿前移）\n→ 定时器已在运行 → 不重启（仍给段 0 计时）',
+          windowState: { base: 0, nextseq: 4, rwnd: 4, segments: buildSegments(0, 4, 4) },
+          timerState: { running: true, forSegment: 0 },
+          bufferState: [0, 1, 2, 3],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 5 步：收到 ACK=2（确认号前进）',
+        eventType: '事件 3：收到确认号前进的 ACK',
+        desc: '收到 ACK=2，Y=2 > SendBase=0。SendBase 推进到 2（后沿前移），段 0、段 1 从发送缓冲区释放。SendBase=2 < NextSeqNum=4，重启定时器（给新的最老未确认段 2 计时）。',
+        motions: [
+          { id: 'a1', label: 'ACK 2', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 800, fields: { '确认号 ack': 2, '窗口大小 rwnd': 4, '标志': 'ACK' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a1', kind: 'ack', label: 'ACK 2', x: 192, y: 250, fields: { '确认号 ack': 2, '窗口大小 rwnd': 4 } }
+          ],
+          nodeStates: { sender: '收到 ACK', receiver: '已发送 ACK' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'a1' },
+          note: '事件 3：收到确认号前进的 ACK\n→ ACK=2，Y=2 > SendBase=0\n→ SendBase: 0 → 2（后沿前移）\n→ 段 0、段 1 从发送缓冲区释放\n→ SendBase=2 < NextSeqNum=4 → 重启定时器（给段 2 计时）',
+          windowState: { base: 2, nextseq: 4, rwnd: 4, segments: buildSegments(2, 4, 4) },
+          timerState: { running: true, forSegment: 2 },
+          bufferState: [2, 3],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 6 步：上层交来数据（段 4）',
+        eventType: '事件 1：上层交来数据',
+        desc: '窗口腾出空间，应用层交来段 4。以 NextSeqNum=4 为序号创建段，立即发出。NextSeqNum 更新为 5（前沿前移）。定时器已在运行（给段 2 计时），不重启。',
+        motions: [
+          { id: 'p4', label: 'DATA 4', kind: 'data', path: [{x:192,y:120},{x:808,y:120}], delay: 0, duration: 1000, fields: { '序号 seq': 4, '数据': 'Segment 4' } }
+        ],
+        state: {
+          packets: [
+            { id: 'p4', kind: 'data', label: 'DATA 4', x: 808, y: 120, fields: { '序号 seq': 4, '数据': 'Segment 4' } }
+          ],
+          nodeStates: { sender: '发送中', receiver: '接收中' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p4' },
+          note: '事件 1：上层交来数据\n→ 创建段 4，发出\n→ NextSeqNum: 4 → 5（前沿前移）\n→ 定时器已在运行 → 不重启（仍给段 2 计时）',
+          windowState: { base: 2, nextseq: 5, rwnd: 4, segments: buildSegments(2, 5, 4) },
+          timerState: { running: true, forSegment: 2 },
+          bufferState: [2, 3, 4],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 7 步：定时器超时（段 2）',
+        eventType: '事件 2：定时器超时',
+        desc: '段 2 迟迟得不到确认，定时器超时。重传最老的未确认段（段 2），即超时重传。重启定时器（仍给段 2 计时）。',
+        motions: [
+          { id: 'p2r', label: 'DATA 2(R)', kind: 'retransmit', path: [{x:192,y:170},{x:808,y:170}], delay: 0, duration: 1000, fields: { '序号 seq': 2, '数据': 'Segment 2', '类型': '超时重传' } }
+        ],
+        state: {
+          packets: [
+            { id: 'p2r', kind: 'retransmit', label: 'DATA 2(R)', x: 808, y: 170, fields: { '序号 seq': 2, '类型': '超时重传' } }
+          ],
+          nodeStates: { sender: '超时重传', receiver: '等待重传' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p2r' },
+          note: '事件 2：定时器超时\n→ 最老的未确认段（段 2）迟迟得不到确认\n→ 重传段 2（超时重传）\n→ 重启定时器（仍给段 2 计时）',
+          windowState: { base: 2, nextseq: 5, rwnd: 4, segments: buildSegments(2, 5, 4, {2: 'retransmit'}) },
+          timerState: { running: true, forSegment: 2 },
+          bufferState: [2, 3, 4],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 8 步：收到 ACK=3（确认号前进）',
+        eventType: '事件 3：收到确认号前进的 ACK',
+        desc: '收到 ACK=3，Y=3 > SendBase=2。SendBase 推进到 3（后沿前移），段 2 从发送缓冲区释放。SendBase=3 < NextSeqNum=5，重启定时器（给新的最老未确认段 3 计时）。',
+        motions: [
+          { id: 'a2', label: 'ACK 3', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 800, fields: { '确认号 ack': 3, '窗口大小 rwnd': 4, '标志': 'ACK' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a2', kind: 'ack', label: 'ACK 3', x: 192, y: 250, fields: { '确认号 ack': 3, '窗口大小 rwnd': 4 } }
+          ],
+          nodeStates: { sender: '收到 ACK', receiver: '已发送 ACK' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'a2' },
+          note: '事件 3：收到确认号前进的 ACK\n→ ACK=3，Y=3 > SendBase=2\n→ SendBase: 2 → 3（后沿前移）\n→ 段 2 从发送缓冲区释放\n→ SendBase=3 < NextSeqNum=5 → 重启定时器（给段 3 计时）',
+          windowState: { base: 3, nextseq: 5, rwnd: 4, segments: buildSegments(3, 5, 4) },
+          timerState: { running: true, forSegment: 3 },
+          bufferState: [3, 4],
+          dupAckCount: 0
+        }
+      },
+      {
+        title: '第 9 步：收到冗余 ACK=3（第 1 个）',
+        eventType: '事件 4：收到冗余 ACK',
+        desc: '收到 ACK=3，Y=3 == SendBase=3（确认号与上次相同）。这是冗余 ACK，针对 Y=3 的重复计数 +1（当前计数：1/3）。',
+        motions: [
+          { id: 'a3', label: 'ACK 3', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 800, fields: { '确认号 ack': 3, '窗口大小 rwnd': 4, '类型': '冗余 ACK' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a3', kind: 'ack', label: 'ACK 3', x: 192, y: 250, fields: { '确认号 ack': 3, '类型': '冗余 ACK', '重复计数': '1/3' } }
+          ],
+          nodeStates: { sender: '收到冗余 ACK', receiver: '发送冗余 ACK' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'a3' },
+          note: '事件 4：收到冗余 ACK\n→ ACK=3，Y=3 == SendBase=3\n→ 重复计数 +1（当前：1/3）\n→ 未触发快速重传',
+          windowState: { base: 3, nextseq: 5, rwnd: 4, segments: buildSegments(3, 5, 4) },
+          timerState: { running: true, forSegment: 3 },
+          bufferState: [3, 4],
+          dupAckCount: 1
+        }
+      },
+      {
+        title: '第 10 步：收到冗余 ACK=3（第 2 个）',
+        eventType: '事件 4：收到冗余 ACK',
+        desc: '再次收到 ACK=3，Y=3 == SendBase=3。重复计数 +1（当前计数：2/3）。仍未触发快速重传。',
+        motions: [
+          { id: 'a4', label: 'ACK 3', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 800, fields: { '确认号 ack': 3, '窗口大小 rwnd': 4, '类型': '冗余 ACK' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a4', kind: 'ack', label: 'ACK 3', x: 192, y: 250, fields: { '确认号 ack': 3, '类型': '冗余 ACK', '重复计数': '2/3' } }
+          ],
+          nodeStates: { sender: '收到冗余 ACK', receiver: '发送冗余 ACK' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'a4' },
+          note: '事件 4：收到冗余 ACK\n→ ACK=3，Y=3 == SendBase=3\n→ 重复计数 +1（当前：2/3）\n→ 未触发快速重传',
+          windowState: { base: 3, nextseq: 5, rwnd: 4, segments: buildSegments(3, 5, 4) },
+          timerState: { running: true, forSegment: 3 },
+          bufferState: [3, 4],
+          dupAckCount: 2
+        }
+      },
+      {
+        title: '第 11 步：收到冗余 ACK=3（第 3 个）→ 快速重传',
+        eventType: '事件 4：收到冗余 ACK',
+        desc: '第 3 次收到 ACK=3，Y=3 == SendBase=3。重复计数达到 3/3，触发快速重传：不等超时，直接重传段 3。',
+        motions: [
+          { id: 'a5', label: 'ACK 3', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 600, fields: { '确认号 ack': 3, '类型': '冗余 ACK', '重复计数': '3/3' } },
+          { id: 'p3r', label: 'DATA 3(R)', kind: 'retransmit', path: [{x:192,y:195},{x:808,y:195}], delay: 400, duration: 1000, fields: { '序号 seq': 3, '数据': 'Segment 3', '类型': '快速重传' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a5', kind: 'ack', label: 'ACK 3', x: 192, y: 250, fields: { '确认号 ack': 3, '类型': '冗余 ACK', '重复计数': '3/3' } },
+            { id: 'p3r', kind: 'retransmit', label: 'DATA 3(R)', x: 808, y: 195, fields: { '序号 seq': 3, '类型': '快速重传' } }
+          ],
+          nodeStates: { sender: '快速重传', receiver: '等待重传' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'p3r' },
+          note: '事件 4：收到冗余 ACK\n→ ACK=3，Y=3 == SendBase=3\n→ 重复计数 +1（当前：3/3）\n→ 累计到 3 个 → 不等超时，直接重传段 3（快速重传）',
+          windowState: { base: 3, nextseq: 5, rwnd: 4, segments: buildSegments(3, 5, 4, {3: 'retransmit'}) },
+          timerState: { running: true, forSegment: 3 },
+          bufferState: [3, 4],
+          dupAckCount: 3
+        }
+      },
+      {
+        title: '第 12 步：收到 ACK=5（确认号前进）',
+        eventType: '事件 3：收到确认号前进的 ACK',
+        desc: '收到 ACK=5，Y=5 > SendBase=3。SendBase 推进到 5（后沿前移），段 3、段 4 从发送缓冲区释放。SendBase=5 == NextSeqNum=5（两个边界重合，窗口清空），关闭定时器。',
+        motions: [
+          { id: 'a6', label: 'ACK 5', kind: 'ack', path: [{x:808,y:250},{x:192,y:250}], delay: 0, duration: 800, fields: { '确认号 ack': 5, '窗口大小 rwnd': 4, '标志': 'ACK' } }
+        ],
+        state: {
+          packets: [
+            { id: 'a6', kind: 'ack', label: 'ACK 5', x: 192, y: 250, fields: { '确认号 ack': 5, '窗口大小 rwnd': 4 } }
+          ],
+          nodeStates: { sender: '收到 ACK', receiver: '已发送 ACK' },
+          activeLinks: ['link1'],
+          focus: { type: 'packet', id: 'a6' },
+          note: '事件 3：收到确认号前进的 ACK\n→ ACK=5，Y=5 > SendBase=3\n→ SendBase: 3 → 5（后沿前移）\n→ 段 3、段 4 从发送缓冲区释放\n→ SendBase=5 == NextSeqNum=5（窗口清空）→ 关闭定时器',
+          windowState: { base: 5, nextseq: 5, rwnd: 4, segments: buildSegments(5, 5, 4) },
+          timerState: { running: false, forSegment: null },
+          bufferState: [],
+          dupAckCount: 0
+        }
+      }
+    ];
+
+    /* ================================================================
+     *  4. 全局状态
+     * ================================================================ */
+    let currentIndex = 0;
+    let animToken = 0;
+    let isPlaying = false;
+    let playbackSpeed = 1;
+    let currentPackets = [];
+    let isResetting = false;
+
+    /* ================================================================
+     *  5. 主题管理
+     * ================================================================ */
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      const btn = document.getElementById('theme-toggle');
+      btn.textContent = theme === 'dark' ? '☀️ 切换亮色' : '🌙 切换暗色';
+      localStorage.setItem('theme', theme);
+      drawPackets(currentPackets);
+      renderWindowState(steps[currentIndex]?.state.windowState);
+      renderTimerState(steps[currentIndex]?.state.timerState);
+      renderBufferState(steps[currentIndex]?.state.bufferState);
+      renderDupAckCount(steps[currentIndex]?.state.dupAckCount);
+      refreshSVGStyles();
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    }
+
+    /* ================================================================
+     *  6. SVG 构建
+     * ================================================================ */
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function svgEl(tag, attrs = {}) {
+      const el = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function buildSVG() {
+      const svg = document.getElementById('topology');
+      svg.innerHTML = '';
+
+      for (const [id, link] of Object.entries(LINKS)) {
+        const from = NODES[link.from];
+        const to = NODES[link.to];
+        const line = svgEl('line', {
+          x1: from.x + 45, y1: from.y,
+          x2: to.x - 45, y2: to.y,
+          stroke: 'var(--link-color)',
+          'stroke-width': '3',
+          'data-id': id,
+          class: 'link'
+        });
+        svg.appendChild(line);
+      }
+
+      for (const [id, node] of Object.entries(NODES)) {
+        const g = svgEl('g', { class: 'node', 'data-id': id });
+        const circle = svgEl('circle', {
+          cx: node.x, cy: node.y, r: 42,
+          fill: 'var(--node-bg)',
+          stroke: 'var(--node-border)',
+          'stroke-width': '3'
+        });
+        g.appendChild(circle);
+
+        const text = svgEl('text', {
+          x: node.x, y: node.y + 5,
+          'text-anchor': 'middle',
+          fill: 'var(--text)',
+          'font-size': '15',
+          'font-weight': 'bold'
+        });
+        text.textContent = node.label;
+        g.appendChild(text);
+
+        const subtext = svgEl('text', {
+          x: node.x, y: node.y + 65,
+          'text-anchor': 'middle',
+          fill: 'var(--text-secondary)',
+          'font-size': '12'
+        });
+        subtext.textContent = node.role;
+        g.appendChild(subtext);
+
+        svg.appendChild(g);
+        g.addEventListener('click', () => {
+          if (!isResetting) updateInfoPanel({ type: 'node', id });
+        });
+      }
+
+      renderWindowState(steps[0].state.windowState);
+      renderTimerState(steps[0].state.timerState);
+      renderBufferState(steps[0].state.bufferState);
+      renderDupAckCount(steps[0].state.dupAckCount);
+    }
+
+    function renderWindowState(windowState) {
+      const svg = document.getElementById('topology');
+      svg.querySelectorAll('.window-viz').forEach(el => el.remove());
+      if (!windowState) return;
+
+      const g = svgEl('g', { class: 'window-viz' });
+
+      const title = svgEl('text', {
+        x: COORD.w / 2, y: WINDOW_Y - 25,
+        'text-anchor': 'middle',
+        fill: 'var(--text)',
+        'font-size': '15',
+        'font-weight': 'bold'
+      });
+      title.textContent = '发送窗口 (Sender Window)';
+      g.appendChild(title);
+
+      windowState.segments.forEach((seg, i) => {
+        const x = WINDOW_X_START + i * (SEGMENT_W + SEGMENT_GAP);
+        const rect = svgEl('rect', {
+          x, y: WINDOW_Y,
+          width: SEGMENT_W, height: SEGMENT_H,
+          fill: `var(--seg-${seg.status})`,
+          stroke: 'var(--border)',
+          'stroke-width': '1',
+          rx: '4'
+        });
+        g.appendChild(rect);
+
+        const text = svgEl('text', {
+          x: x + SEGMENT_W / 2,
+          y: WINDOW_Y + SEGMENT_H / 2 + 5,
+          'text-anchor': 'middle',
+          fill: '#fff',
+          'font-size': '13',
+          'font-weight': 'bold'
+        });
+        text.textContent = seg.seq;
+        g.appendChild(text);
+      });
+
+      const windowStartX = WINDOW_X_START + windowState.base * (SEGMENT_W + SEGMENT_GAP);
+      const windowW = windowState.rwnd * (SEGMENT_W + SEGMENT_GAP) - SEGMENT_GAP;
+      const border = svgEl('rect', {
+        x: windowStartX - 3, y: WINDOW_Y - 3,
+        width: windowW + 6, height: SEGMENT_H + 6,
+        fill: 'none',
+        stroke: 'var(--accent)',
+        'stroke-width': '3',
+        'stroke-dasharray': '8,4',
+        rx: '6'
+      });
+      g.appendChild(border);
+
+      const baseLabel = svgEl('text', {
+        x: windowStartX, y: WINDOW_Y - 8,
+        'text-anchor': 'start',
+        fill: 'var(--accent)',
+        'font-size': '12',
+        'font-weight': 'bold'
+      });
+      baseLabel.textContent = `SendBase=${windowState.base}`;
+      g.appendChild(baseLabel);
+
+      const rwndLabel = svgEl('text', {
+        x: windowStartX + windowW, y: WINDOW_Y - 8,
+        'text-anchor': 'end',
+        fill: 'var(--accent)',
+        'font-size': '12',
+        'font-weight': 'bold'
+      });
+      rwndLabel.textContent = `rwnd=${windowState.rwnd}`;
+      g.appendChild(rwndLabel);
+
+      const nextseqX = WINDOW_X_START + windowState.nextseq * (SEGMENT_W + SEGMENT_GAP) + SEGMENT_W / 2;
+      const nsLabel = svgEl('text', {
+        x: nextseqX, y: WINDOW_Y + SEGMENT_H + 18,
+        'text-anchor': 'middle',
+        fill: 'var(--text-secondary)',
+        'font-size': '12',
+        'font-weight': '600'
+      });
+      nsLabel.textContent = `NextSeqNum=${windowState.nextseq}`;
+      g.appendChild(nsLabel);
+
+      svg.appendChild(g);
+    }
+
+    function renderTimerState(timerState) {
+      const svg = document.getElementById('topology');
+      svg.querySelectorAll('.timer-viz').forEach(el => el.remove());
+      if (!timerState) return;
+
+      const g = svgEl('g', { class: 'timer-viz' });
+      const text = svgEl('text', {
+        x: NODES.sender.x,
+        y: NODES.sender.y - 60,
+        'text-anchor': 'middle',
+        fill: timerState.running ? 'var(--accent)' : 'var(--text-secondary)',
+        'font-size': '12',
+        'font-weight': 'bold'
+      });
+      text.textContent = timerState.running
+        ? `⏱️ 定时器运行中 (给段 ${timerState.forSegment} 计时)`
+        : '⏹ 定时器已停止';
+      g.appendChild(text);
+      svg.appendChild(g);
+    }
+
+    function renderBufferState(bufferState) {
+      const svg = document.getElementById('topology');
+      svg.querySelectorAll('.buffer-viz').forEach(el => el.remove());
+      if (!bufferState) return;
+
+      const g = svgEl('g', { class: 'buffer-viz' });
+
+      const title = svgEl('text', {
+        x: NODES.sender.x,
+        y: NODES.sender.y + 80,
+        'text-anchor': 'middle',
+        fill: 'var(--text-secondary)',
+        'font-size': '12'
+      });
+      title.textContent = '发送缓冲区';
+      g.appendChild(title);
+
+      if (bufferState.length === 0) {
+        const emptyText = svgEl('text', {
+          x: NODES.sender.x,
+          y: NODES.sender.y + 100,
+          'text-anchor': 'middle',
+          fill: 'var(--text-secondary)',
+          'font-size': '11'
+        });
+        emptyText.textContent = '(空)';
+        g.appendChild(emptyText);
+      } else {
+        const startX = NODES.sender.x - (bufferState.length * 28) / 2;
+        bufferState.forEach((seq, i) => {
+          const rect = svgEl('rect', {
+            x: startX + i * 28,
+            y: NODES.sender.y + 90,
+            width: 24,
+            height: 24,
+            fill: 'var(--seg-inflight)',
+            stroke: 'var(--border)',
+            'stroke-width': '1',
+            rx: '3'
+          });
+          g.appendChild(rect);
+
+          const text = svgEl('text', {
+            x: startX + i * 28 + 12,
+            y: NODES.sender.y + 106,
+            'text-anchor': 'middle',
+            fill: '#fff',
+            'font-size': '11',
+            'font-weight': 'bold'
+          });
+          text.textContent = seq;
+          g.appendChild(text);
+        });
+      }
+
+      svg.appendChild(g);
+    }
+
+    function renderDupAckCount(dupAckCount) {
+      const svg = document.getElementById('topology');
+      svg.querySelectorAll('.dupack-viz').forEach(el => el.remove());
+      if (dupAckCount === undefined || dupAckCount === null) return;
+
+      const g = svgEl('g', { class: 'dupack-viz' });
+      const text = svgEl('text', {
+        x: NODES.receiver.x,
+        y: NODES.receiver.y + 80,
+        'text-anchor': 'middle',
+        fill: dupAckCount > 0 ? 'var(--pkt-lost)' : 'var(--text-secondary)',
+        'font-size': '12',
+        'font-weight': 'bold'
+      });
+      text.textContent = `重复 ACK: ${dupAckCount}/3`;
+      g.appendChild(text);
+      svg.appendChild(g);
+    }
+
+    function refreshSVGStyles() {
+      const svg = document.getElementById('topology');
+      svg.style.display = 'none';
+      void svg.offsetHeight;
+      svg.style.display = '';
+    }
+
+    /* ================================================================
+     *  7. Canvas 渲染
+     * ================================================================ */
+    function resizeCanvas() {
+      const canvas = document.getElementById('packets');
+      const svg = document.getElementById('topology');
+      const rect = svg.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+
+      const ctx = canvas.getContext('2d');
+      const scaleX = canvas.width / COORD.w;
+      const scaleY = canvas.height / COORD.h;
+      ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+
+      drawPackets(currentPackets);
+    }
+
+    function drawPackets(packets) {
+      const canvas = document.getElementById('packets');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, COORD.w, COORD.h);
+
+      packets.forEach(pkt => {
+        const colorKey = pkt.kind === 'data' ? '--pkt-data' :
+                         pkt.kind === 'ack' ? '--pkt-ack' :
+                         pkt.kind === 'retransmit' ? '--pkt-retransmit' :
+                         '--pkt-lost';
+        const color = getCSSVar(colorKey) || '#999';
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.2)';
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        ctx.fillStyle = color;
+        roundRect(ctx, pkt.x - 30, pkt.y - 15, 60, 30, 6);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, pkt.x - 30, pkt.y - 15, 60, 30, 6);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(pkt.label, pkt.x, pkt.y);
+      });
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    /* ================================================================
+     *  8. renderState (幂等渲染)
+     * ================================================================ */
+    function renderState(state, options = {}) {
+      if (!state) return;
+
+      document.querySelectorAll('.link').forEach(link => {
+        link.setAttribute('stroke', 'var(--link-color)');
+        link.setAttribute('stroke-width', '3');
+      });
+      (state.activeLinks || []).forEach(linkId => {
+        const link = document.querySelector(`.link[data-id="${linkId}"]`);
+        if (link) {
+          link.setAttribute('stroke', 'var(--accent)');
+          link.setAttribute('stroke-width', '5');
+        }
+      });
+
+      if (state.windowState) renderWindowState(state.windowState);
+      if (state.timerState) renderTimerState(state.timerState);
+      if (state.bufferState) renderBufferState(state.bufferState);
+      if (state.dupAckCount !== undefined) renderDupAckCount(state.dupAckCount);
+
+      currentPackets = state.packets || [];
+      drawPackets(currentPackets);
+
+      document.querySelectorAll('.node').forEach(node => {
+        const circle = node.querySelector('circle');
+        if (circle) circle.setAttribute('stroke-width', '3');
+      });
+      for (const [id, status] of Object.entries(state.nodeStates || {})) {
+        const node = document.querySelector(`.node[data-id="${id}"]`);
+        if (node) {
+          const circle = node.querySelector('circle');
+          if (circle && (status.includes('发送') || status.includes('接收') || status.includes('超时') || status.includes('重传') || status.includes('ACK'))) {
+            circle.setAttribute('stroke-width', '5');
+          }
+        }
+      }
+
+      if (state.focus && options.updateFocus !== false) {
+        updateInfoPanel(state.focus);
+      }
+
+      const noteEl = document.getElementById('step-note');
+      if (noteEl) {
+        noteEl.textContent = state.note || '';
+        noteEl.style.display = state.note ? 'block' : 'none';
+      }
+    }
+
+    /* ================================================================
+     *  9. 信息面板
+     * ================================================================ */
+    function updateInfoPanel(focus) {
+      const content = document.getElementById('info-content');
+      if (!focus) {
+        content.innerHTML = '<p>点击节点或数据包查看详细信息</p>';
+        return;
+      }
+
+      if (focus.type === 'node') {
+        const node = NODES[focus.id];
+        const state = steps[currentIndex]?.state.nodeStates[focus.id] || '未知';
+        content.innerHTML = `
+          <h4>📡 ${node.label}</h4>
+          <p><span class="field-key">角色:</span> ${node.role}</p>
+          <p><span class="field-key">状态:</span> ${state}</p>
+          <p><span class="field-key">说明:</span> ${node.desc}</p>
+        `;
+      } else if (focus.type === 'packet') {
+        const pkt = currentPackets.find(p => p.id === focus.id) ||
+                    steps[currentIndex]?.state.packets.find(p => p.id === focus.id);
+        if (pkt && pkt.fields) {
+          const fieldsHtml = Object.entries(pkt.fields)
+            .map(([k, v]) => `<p><span class="field-key">${k}:</span> ${v}</p>`)
+            .join('');
+          content.innerHTML = `
+            <h4>📨 数据包 ${pkt.label}</h4>
+            ${fieldsHtml}
+          `;
+        } else {
+          content.innerHTML = '<p>数据包信息不可用</p>';
+        }
+      }
+    }
+
+    /* ================================================================
+     *  10. 动画层 (已修复防卡死逻辑)
+     * ================================================================ */
+    function playMotions(step, token) {
+      return new Promise((resolve) => {
+        const motions = step.motions;
+        if (!motions || motions.length === 0) {
+          resolve();
+          return;
+        }
+
+        const startTime = performance.now();
+        let rafId = null;
+        let timeoutId = null;
+
+        let maxDuration = 0;
+        motions.forEach(m => {
+          const end = m.delay + m.duration;
+          if (end > maxDuration) maxDuration = end;
+        });
+        const timeoutMs = (maxDuration / playbackSpeed) + 100;
+
+        const tick = () => {
+          if (token !== animToken) {
+            if (rafId) cancelAnimationFrame(rafId);
+            if (timeoutId) clearTimeout(timeoutId);
+            currentPackets = step.state.packets;
+            drawPackets(currentPackets);
+            resolve();
+            return;
+          }
+
+          const now = performance.now();
+          const elapsed = (now - startTime) * playbackSpeed;
+          let allDone = true;
+
+          const animPackets = [];
+          for (const m of motions) {
+            const motionElapsed = elapsed - m.delay;
+            if (motionElapsed < 0) {
+              allDone = false;
+              continue;
+            }
+            const progress = Math.min(motionElapsed / m.duration, 1);
+            if (progress < 1) allDone = false;
+
+            const pos = interpolatePath(m.path, progress);
+            animPackets.push({
+              id: m.id,
+              kind: m.kind,
+              label: m.label,
+              x: pos.x,
+              y: pos.y,
+              fields: m.fields
+            });
+          }
+
+          drawPackets(animPackets);
+
+          if (allDone || elapsed >= maxDuration) {
+            if (rafId) cancelAnimationFrame(rafId);
+            if (timeoutId) clearTimeout(timeoutId);
+            currentPackets = step.state.packets;
+            drawPackets(currentPackets);
+            resolve();
+          } else {
+            rafId = requestAnimationFrame(tick);
+          }
+        };
+
+        rafId = requestAnimationFrame(tick);
+
+        timeoutId = setTimeout(() => {
+          if (token === animToken) {
+            if (rafId) cancelAnimationFrame(rafId);
+            currentPackets = step.state.packets;
+            drawPackets(currentPackets);
+            resolve();
+          }
+        }, timeoutMs + 500);
+      });
+    }
+
+    /* ================================================================
+     *  11. goToStep (唯一入口)
+     * ================================================================ */
+    async function goToStep(index, options = {}) {
+      const { animate = true } = options;
+
+      index = Math.max(0, Math.min(index, steps.length - 1));
+
+      if (index === currentIndex && !animate) return;
+
+      const token = ++animToken;
+      const prevIndex = currentIndex;
+      currentIndex = index;
+
+      updateControls();
+      updateStepInfo();
+
+      if (animate && index > prevIndex && steps[index].motions.length > 0) {
+        await playMotions(steps[index], token);
+        if (token !== animToken) return;
+      }
+
+      renderState(steps[index].state, { animate: false });
+    }
+
+    /* ================================================================
+     *  12. 播放控制
+     * ================================================================ */
+    function play() {
+      if (isPlaying || currentIndex >= steps.length - 1) return;
+      isPlaying = true;
+      updateControls();
+
+      (async () => {
+        while (isPlaying && currentIndex < steps.length - 1) {
+          await goToStep(currentIndex + 1, { animate: true });
+          if (!isPlaying) break;
+          await sleep(800 / playbackSpeed);
+        }
+        isPlaying = false;
+        updateControls();
+      })();
+    }
+
+    function pause() {
+      if (!isPlaying) return;
+      isPlaying = false;
+      animToken++;
+
+      if (steps[currentIndex]) {
+        renderState(steps[currentIndex].state, { animate: false });
+      }
+      updateControls();
+    }
+
+    function reset() {
+      if (isResetting) return;
+      isResetting = true;
+      pause();
+      goToStep(0, { animate: false }).then(() => {
+        isResetting = false;
+      });
+    }
+
+    function stepForward() {
+      if (isResetting) return;
+      if (currentIndex < steps.length - 1) {
+        if (isPlaying) pause();
+        goToStep(currentIndex + 1, { animate: true });
+      }
+    }
+
+    function stepBackward() {
+      if (isResetting) return;
+      if (currentIndex > 0) {
+        if (isPlaying) pause();
+        goToStep(currentIndex - 1, { animate: false });
+      }
+    }
+
+    /* ================================================================
+     *  13. UI 同步
+     * ================================================================ */
+    function updateControls() {
+      const btnPrev = document.getElementById('btn-prev');
+      const btnStep = document.getElementById('btn-step');
+      const btnPlay = document.getElementById('btn-play');
+      const btnReset = document.getElementById('btn-reset');
+
+      btnPrev.disabled = currentIndex <= 0 || isResetting;
+      btnStep.disabled = currentIndex >= steps.length - 1 || isResetting;
+      btnPlay.textContent = isPlaying ? '⏸ 暂停' : '▶ 播放';
+      btnPlay.disabled = currentIndex >= steps.length - 1 && !isPlaying;
+      btnReset.disabled = isResetting;
+    }
+
+    function updateStepInfo() {
+      const step = steps[currentIndex];
+      document.getElementById('step-title').textContent = step.title;
+      document.getElementById('event-badge').textContent = step.eventType || '';
+      document.getElementById('step-desc').textContent = step.desc;
+      document.getElementById('step-progress').textContent =
+        `第 ${currentIndex + 1} / ${steps.length} 步`;
+      const pct = ((currentIndex + 1) / steps.length) * 100;
+      document.getElementById('progress-fill').style.width = pct + '%';
+    }
+
+    /* ================================================================
+     *  14. 交互绑定
+     * ================================================================ */
+    function bindEvents() {
+      document.getElementById('btn-reset').addEventListener('click', reset);
+      document.getElementById('btn-prev').addEventListener('click', stepBackward);
+      document.getElementById('btn-play').addEventListener('click', () => {
+        isPlaying ? pause() : play();
+      });
+      document.getElementById('btn-step').addEventListener('click', stepForward);
+
+      document.getElementById('speed-slider').addEventListener('input', (e) => {
+        playbackSpeed = parseFloat(e.target.value);
+        document.getElementById('speed-value').textContent = playbackSpeed + '×';
+      });
+
+      document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+      const canvas = document.getElementById('packets');
+      canvas.addEventListener('click', (e) => {
+        if (isResetting) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (COORD.w / rect.width);
+        const y = (e.clientY - rect.top) * (COORD.h / rect.height);
+
+        for (const pkt of currentPackets) {
+          if (Math.abs(pkt.x - x) < 30 && Math.abs(pkt.y - y) < 15) {
+            updateInfoPanel({ type: 'packet', id: pkt.id });
+            return;
+          }
+        }
+
+        for (const [id, node] of Object.entries(NODES)) {
+          const dx = node.x - x;
+          const dy = node.y - y;
+          if (Math.sqrt(dx*dx + dy*dy) < 42) {
+            updateInfoPanel({ type: 'node', id });
+            return;
+          }
+        }
+      });
+
+      window.addEventListener('resize', resizeCanvas);
+
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (!localStorage.getItem('theme')) {
+          applyTheme(e.matches ? 'dark' : 'light');
+        }
+      });
+    }
+
+    /* ================================================================
+     *  15. 快捷键
+     * ================================================================ */
+    const SHORTCUTS = {
+      ' ':          () => isPlaying ? pause() : play(),
+      's':          stepForward,
+      'ArrowRight': stepForward,
+      'a':          stepBackward,
+      'ArrowLeft':  stepBackward,
+      'r':          reset,
+      't':          toggleTheme
+    };
+
+    const SHORTCUT_BTN_MAP = {
+      ' ':          'btn-play',
+      's':          'btn-step',
+      'ArrowRight': 'btn-step',
+      'a':          'btn-prev',
+      'ArrowLeft':  'btn-prev',
+      'r':          'btn-reset',
+      't':          'theme-toggle'
+    };
+
+    function bindShortcuts() {
+      document.addEventListener('keydown', (e) => {
+        const tag = document.activeElement.tagName;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) ||
+            document.activeElement.isContentEditable) {
+          return;
+        }
+
+        let key = e.key;
+        if (key.length === 1) key = key.toLowerCase();
+
+        if (SHORTCUTS[key]) {
+          const btn = document.getElementById(SHORTCUT_BTN_MAP[key]);
+          if (btn && btn.disabled) return;
+
+          e.preventDefault();
+          SHORTCUTS[key]();
+
+          if (btn) {
+            btn.classList.add('flash');
+            setTimeout(() => btn.classList.remove('flash'), 250);
+          }
+        }
+      });
+    }
+
+    /* ================================================================
+     *  16. 初始化
+     * ================================================================ */
+    function init() {
+      const savedTheme = localStorage.getItem('theme');
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = savedTheme || (systemDark ? 'dark' : 'light');
+      applyTheme(theme);
+
+      buildSVG();
+      resizeCanvas();
+      renderState(steps[0].state, { animate: false });
+      updateControls();
+      updateStepInfo();
+
+      bindEvents();
+      bindShortcuts();
+    }
+
+    init();
+  </script>
+</body>
+</html>
