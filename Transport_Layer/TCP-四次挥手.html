@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TCP 连接释放（四次挥手）· 报文与状态机交互演示</title>
+
+<!-- ============================================================
+     1. CSS 样式（主题变量 / 布局 / SVG 基础样式 / 过渡动画 / 按钮反馈）
+     ============================================================ -->
+<style>
+:root{
+  --anim-duration: 1.6s;
+
+  --bg:            #eef2f7;
+  --bg-panel:      #ffffff;
+  --bg-inset:      #f2f5f9;
+  --border:        #d7dfe8;
+  --text:          #1f2a37;
+  --text-2:        #52606d;
+  --text-3:        #8b98a5;
+
+  --accent:        #0ea5a4;
+  --accent-soft:   rgba(14,165,164,.14);
+
+  /* TCP 释放状态色 */
+  --st-established: #22c55e;
+  --st-finwait1:    #f59e0b;
+  --st-finwait2:    #f97316;
+  --st-timewait:    #ef4444;
+  --st-closewait:   #38bdf8;
+  --st-lastack:     #a78bfa;
+  --st-closed:      #94a3b8;
+
+  /* 四次挥手报文色 */
+  --pk-fin1:  #ef4444;
+  --pk-ack1:  #f59e0b;
+  --pk-fin2:  #a855f7;
+  --pk-ack2:  #22c55e;
+
+  --trace-idle:   #c2cbd6;
+  --link:         #b9c3d0;
+
+  --shadow: 0 2px 10px rgba(23,37,64,.08), 0 1px 3px rgba(23,37,64,.06);
+  --radius: 14px;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+[data-theme="dark"]{
+  --bg:            #0f172a;
+  --bg-panel:      #172136;
+  --bg-inset:      #0d1526;
+  --border:        #2b3a55;
+  --text:          #e6edf6;
+  --text-2:        #aab8cc;
+  --text-3:        #6e7f99;
+
+  --accent:        #2dd4bf;
+  --accent-soft:   rgba(45,212,191,.16);
+
+  --st-established: #34d399;
+  --st-finwait1:    #fbbf24;
+  --st-finwait2:    #fb923c;
+  --st-timewait:    #f87171;
+  --st-closewait:   #38bdf8;
+  --st-lastack:     #c4b5fd;
+  --st-closed:      #64748b;
+
+  --pk-fin1:  #f87171;
+  --pk-ack1:  #fbbf24;
+  --pk-fin2:  #c084fc;
+  --pk-ack2:  #34d399;
+
+  --trace-idle:   #3a4a63;
+  --link:         #33435e;
+
+  --shadow: 0 2px 14px rgba(0,0,0,.42), 0 1px 3px rgba(0,0,0,.35);
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  background:var(--bg); color:var(--text);
+  transition:background .35s,color .35s;
+  -webkit-font-smoothing:antialiased;
+}
+.app{ max-width:1280px; margin:0 auto; padding:18px 20px 34px; }
+
+.topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:14px 20px; margin-bottom:18px;
+  background:var(--bg-panel); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow);
+}
+.brand{ display:flex; align-items:center; gap:12px; min-width:0; }
+.brand .logo{
+  width:40px; height:40px; border-radius:11px; flex:none;
+  display:grid; place-items:center; font-size:20px; color:#fff;
+  background:linear-gradient(135deg,#0ea5a4,#7c3aed);
+  box-shadow:0 4px 12px rgba(14,165,164,.35);
+}
+.brand h1{ font-size:18px; font-weight:700; letter-spacing:.2px; line-height:1.25; }
+.brand p{ font-size:12px; color:var(--text-3); margin-top:2px; }
+.top-actions{ display:flex; align-items:center; gap:8px; flex:none; }
+
+.grid{
+  display:grid; gap:18px;
+  grid-template-columns:minmax(0,1fr) 400px;
+  grid-template-areas:
+    "topo  topo"
+    "fsm   detail"
+    "step  step"
+    "ctrl  log";
+}
+@media (max-width:1020px){
+  .grid{ grid-template-columns:1fr;
+    grid-template-areas:"topo" "fsm" "detail" "step" "ctrl" "log"; }
+}
+
+.card{
+  background:var(--bg-panel); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden;
+}
+.card-hd{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px; border-bottom:1px solid var(--border);
+}
+.card-hd h2{ font-size:14px; font-weight:700; display:flex; align-items:center; gap:8px; }
+.card-hd .tag{
+  font-size:11px; font-weight:600; color:var(--accent);
+  background:var(--accent-soft); padding:3px 8px; border-radius:999px;
+}
+.card-bd{ padding:16px; }
+
+#card-topo{ grid-area:topo; }
+#card-fsm{ grid-area:fsm; }
+#card-detail{ grid-area:detail; display:flex; flex-direction:column; min-height:0; }
+#card-step{ grid-area:step; }
+#card-ctrl{ grid-area:ctrl; }
+#card-log{ grid-area:log; display:flex; flex-direction:column; min-height:0; }
+
+.btn{
+  appearance:none; border:1px solid var(--border); background:var(--bg-inset);
+  color:var(--text); font-size:13px; font-weight:600;
+  padding:9px 14px; border-radius:10px; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  transition:transform .12s, background .2s, border-color .2s, box-shadow .2s, opacity .2s;
+  user-select:none;
+}
+.btn:hover:not(:disabled){ border-color:var(--accent); color:var(--accent); }
+.btn:active:not(:disabled){ transform:translateY(1px); }
+.btn:disabled{ opacity:.42; cursor:not-allowed; }
+.btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.primary:hover:not(:disabled){ color:#fff; filter:brightness(1.06); }
+.btn.icon{ width:38px; height:38px; padding:0; font-size:16px; }
+.btn.key-flash{ box-shadow:0 0 0 3px var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+.btn.primary.key-flash{ color:#fff; }
+
+.kbd-hint{ font-size:11px; color:var(--text-3); }
+kbd{
+  font-family:var(--mono); font-size:10px; color:var(--text-2);
+  background:var(--bg-inset); border:1px solid var(--border);
+  border-bottom-width:2px; border-radius:5px; padding:1px 5px;
+}
+
+/* ---------- 拓扑 ---------- */
+#topo{ width:100%; height:auto; display:block; }
+.node-box{
+  fill:var(--bg-inset); stroke:var(--border); stroke-width:1.5;
+  transition:stroke .3s, filter .3s;
+}
+.node-title{ font-size:15px; font-weight:700; fill:var(--text); }
+.node-addr{ font-size:11px; fill:var(--text-3); font-family:var(--mono); }
+.node-icon{ font-size:26px; }
+.badge-rect{ rx:9; transition:fill .35s; }
+.badge-text{ font-size:11px; font-weight:700; fill:#fff; letter-spacing:.4px; }
+.badge-cap{ font-size:9px; fill:var(--text-3); }
+
+.trace{ stroke:var(--trace-idle); stroke-width:2; stroke-dasharray:7 6;
+  fill:none; opacity:0; transition:opacity .4s; }
+.trace.on{ opacity:1; }
+.trace-label{ font-size:11px; font-weight:700; opacity:0; transition:opacity .4s; }
+.trace-label.on{ opacity:1; }
+
+/* 报文卡片：位移走 CSS transition */
+.pkt{ transition:transform var(--anim-duration) cubic-bezier(.45,.05,.45,1), opacity .35s; cursor:pointer; }
+.pkt.snap{ transition:none !important; }
+.pkt-body{ stroke-width:1.6; filter:drop-shadow(0 4px 8px rgba(10,20,40,.28)); }
+.pkt-kind{ font-size:12px; font-weight:800; fill:#fff; letter-spacing:.6px; }
+.pkt-seq{ font-size:10px; font-weight:600; fill:#fff; opacity:.92; font-family:var(--mono); }
+.pkt-arrow{ fill:#fff; opacity:.9; }
+
+.pulse{ fill:none; stroke-width:3; opacity:0; transform-box:fill-box; transform-origin:center; }
+.pulse.run{ animation:pulseRing .9s ease-out forwards; }
+@keyframes pulseRing{
+  0%{ transform:scale(.3); opacity:.85; }
+  100%{ transform:scale(2.4); opacity:0; }
+}
+
+/* TIME_WAIT 计时条（CSS 动画，非 rAF） */
+.msl{ opacity:0; transition:opacity .4s; }
+.msl .msl-fill{ transform-box:fill-box; transform-origin:left center; transform:scaleX(0); }
+.msl.run .msl-fill{ animation:mslFill 2.2s ease forwards; }
+@keyframes mslFill{ to{ transform:scaleX(1); } }
+.msl text{ font-size:10px; fill:var(--text-2); font-weight:600; }
+
+/* ---------- 状态机 ---------- */
+.fsm-wrap{ display:flex; flex-direction:column; gap:6px; }
+.fsm-owner{ display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:var(--text-2); margin:6px 0 2px; }
+.fsm-owner .dot{ width:9px; height:9px; border-radius:50%; }
+.fsm{ width:100%; height:auto; display:block; }
+
+.fsm-node rect{
+  fill:var(--bg-inset); stroke:var(--border); stroke-width:1.6;
+  transition:fill .35s, stroke .35s, stroke-width .35s;
+}
+.fsm-node text{ font-size:11px; font-weight:700; fill:var(--text-2); transition:fill .35s; text-anchor:middle; }
+.fsm-node.done rect{ fill:var(--accent-soft); stroke:var(--accent); }
+.fsm-node.done text{ fill:var(--accent); }
+.fsm-node.current rect{ stroke-width:2.5; }
+.fsm-node.current text{ fill:#fff; }
+.fsm-node.future{ opacity:.5; }
+
+.fsm-edge path{ fill:none; stroke:var(--link); stroke-width:2; transition:stroke .35s, stroke-width .35s; }
+.fsm-edge text{ font-size:9px; fill:var(--text-3); text-anchor:middle; transition:fill .35s; }
+.fsm-edge.done path{ stroke:var(--accent); }
+.fsm-edge.done text{ fill:var(--accent); font-weight:700; }
+.fsm-edge.active path{ stroke-width:3.4; stroke-dasharray:6 5; animation:dashFlow 1s linear infinite; }
+.fsm-edge.active text{ font-weight:700; }
+@keyframes dashFlow{ to{ stroke-dashoffset:-22; } }
+
+.fsm-legend{ display:flex; flex-wrap:wrap; gap:12px; padding:12px 16px; border-top:1px solid var(--border); font-size:11px; color:var(--text-2); }
+.fsm-legend span{ display:inline-flex; align-items:center; gap:6px; }
+.sw{ width:14px; height:14px; border-radius:4px; display:inline-block; }
+
+/* ---------- 信息面板 ---------- */
+#detail-body{ overflow:auto; flex:1; padding:16px; min-height:0; max-height:430px; }
+.d-chip{ display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:700; padding:5px 11px; border-radius:999px; color:#fff; margin-bottom:12px; }
+.d-sec{ font-size:12px; font-weight:800; color:var(--text-3); letter-spacing:.5px; margin:16px 0 8px; text-transform:uppercase; }
+.d-sec:first-child{ margin-top:0; }
+
+.kv{ width:100%; border-collapse:collapse; font-size:12.5px; }
+.kv td{ padding:7px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+.kv tr:last-child td{ border-bottom:none; }
+.kv td.k{ color:var(--text-2); width:46%; }
+.kv td.v{ font-family:var(--mono); font-weight:600; }
+
+.flag-row{ display:flex; gap:6px; flex-wrap:wrap; }
+.flag-cell{
+  flex:1; min-width:38px; text-align:center; padding:7px 2px;
+  border:1px solid var(--border); border-radius:8px; background:var(--bg-inset);
+  transition:background .25s,border-color .25s;
+}
+.flag-cell .n{ font-size:10px; font-weight:700; color:var(--text-3); }
+.flag-cell .b{ font-size:13px; font-weight:800; font-family:var(--mono); color:var(--text-2); margin-top:2px; }
+.flag-cell.hit{ background:var(--fc,var(--accent)); border-color:transparent; }
+.flag-cell.hit .n,.flag-cell.hit .b{ color:#fff; }
+
+.explain{
+  font-size:12.5px; line-height:1.75; color:var(--text-2);
+  background:var(--bg-inset); border-left:3px solid var(--accent);
+  border-radius:0 8px 8px 0; padding:12px 14px;
+}
+.sum-table{ width:100%; border-collapse:collapse; font-size:12px; }
+.sum-table th,.sum-table td{ padding:8px 8px; border:1px solid var(--border); text-align:center; }
+.sum-table th{ background:var(--bg-inset); color:var(--text-2); font-size:11px; }
+.sum-table .mono{ font-family:var(--mono); }
+
+/* ---------- 步骤说明 ---------- */
+.step-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.step-title{ font-size:16px; font-weight:800; display:flex; align-items:center; gap:10px; }
+.step-no{
+  font-size:12px; font-weight:800; color:#fff; background:var(--accent);
+  padding:3px 10px; border-radius:999px; flex:none;
+}
+.step-desc{ margin-top:8px; font-size:13.5px; line-height:1.8; color:var(--text-2); max-width:820px; }
+.step-tip{ margin-top:10px; font-size:12.5px; color:var(--text-2); background:var(--accent-soft); border-radius:8px; padding:9px 12px; }
+.step-tip b{ color:var(--accent); }
+.progress-row{ display:flex; align-items:center; gap:14px; margin-top:16px; }
+.prog{ flex:1; height:8px; background:var(--bg-inset); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+.prog-fill{ height:100%; width:0%; border-radius:999px; background:linear-gradient(90deg,var(--accent),#7c3aed); transition:width .4s ease; }
+.prog-text{ font-size:12px; font-weight:700; color:var(--text-2); font-family:var(--mono); flex:none; }
+.step-dots{ display:flex; gap:6px; margin-top:12px; }
+.sdot{ width:22px; height:7px; border-radius:99px; background:var(--bg-inset); border:1px solid var(--border); cursor:pointer; transition:background .25s,border-color .25s; }
+.sdot.past{ background:var(--accent-soft); border-color:var(--accent); }
+.sdot.cur{ background:var(--accent); border-color:var(--accent); }
+
+/* ---------- 控制台 ---------- */
+.ctrl-btns{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.speed-row{ display:flex; align-items:center; gap:12px; margin-top:16px; }
+.speed-row label{ font-size:12.5px; font-weight:700; color:var(--text-2); flex:none; }
+#speed{ flex:1; accent-color:var(--accent); }
+#speed-val{ font-family:var(--mono); font-size:12px; color:var(--text-2); width:44px; text-align:right; }
+.hotkeys{ display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:14px; padding-top:12px; border-top:1px dashed var(--border); font-size:11px; color:var(--text-3); }
+.hotkeys span{ display:inline-flex; align-items:center; gap:5px; }
+
+/* ---------- 日志 ---------- */
+#log-body{ flex:1; min-height:150px; max-height:230px; overflow:auto; padding:12px 14px; background:var(--bg-inset); font-family:var(--mono); font-size:11.5px; line-height:1.9; }
+.log-empty{ color:var(--text-3); }
+.log-line{ display:flex; gap:10px; white-space:nowrap; }
+.log-line .t{ color:var(--text-3); flex:none; }
+.log-line .f{ font-weight:800; flex:none; }
+.log-line.fin1 .f{ color:var(--pk-fin1); }
+.log-line.ack1 .f{ color:var(--pk-ack1); }
+.log-line.fin2 .f{ color:var(--pk-fin2); }
+.log-line.ack2 .f{ color:var(--pk-ack2); }
+.log-line.sys .f{ color:var(--accent); }
+.log-line .m{ color:var(--text-2); }
+
+.footnote{ margin-top:16px; font-size:11.5px; color:var(--text-3); line-height:1.7; text-align:center; }
+</style>
+</head>
+<body>
+<!-- ============================================================
+     2. HTML 结构（UI 层）
+     ============================================================ -->
+<div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">✂</div>
+      <div>
+        <h1>TCP 连接释放（四次挥手）交互演示</h1>
+        <p>报文段结构 · 双端状态机 · TIME_WAIT 与 2MSL</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="kbd-hint"><kbd>T</kbd> 主题</span>
+      <button class="btn icon" id="btn-theme" title="切换深色/浅色主题（快捷键 T）">🌙</button>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- 拓扑区 -->
+    <div class="card" id="card-topo">
+      <div class="card-hd">
+        <h2>🗺️ 网络拓扑与报文传输 <span class="tag">SVG 动画</span></h2>
+        <span class="kbd-hint">前提：连接已建立且数据传输完成，客户端主动关闭</span>
+      </div>
+      <div class="card-bd" style="padding:8px 12px 14px;">
+        <svg id="topo" viewBox="0 0 960 350" role="img" aria-label="TCP 连接释放拓扑">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--trace-idle)"></path>
+            </marker>
+            <linearGradient id="g-fin1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ef4444"/><stop offset="1" stop-color="#f97316"/>
+            </linearGradient>
+            <linearGradient id="g-ack1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#fbbf24"/>
+            </linearGradient>
+            <linearGradient id="g-fin2" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#a855f7"/><stop offset="1" stop-color="#6366f1"/>
+            </linearGradient>
+            <linearGradient id="g-ack2" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#22c55e"/><stop offset="1" stop-color="#14b8a6"/>
+            </linearGradient>
+          </defs>
+
+          <!-- 四条轨迹（四次挥手） -->
+          <path id="trace-fin1" class="trace" d="M225,100 L735,100" marker-end="url(#ar)"/>
+          <path id="trace-ack1" class="trace" d="M735,145 L225,145" marker-end="url(#ar)"/>
+          <path id="trace-fin2" class="trace" d="M735,190 L225,190" marker-end="url(#ar)"/>
+          <path id="trace-ack2" class="trace" d="M225,235 L735,235" marker-end="url(#ar)"/>
+          <text id="trace-label-fin1" class="trace-label" x="232" y="88"  style="fill:var(--pk-fin1)">① FIN　seq=5001, ack=9001</text>
+          <text id="trace-label-ack1" class="trace-label" x="596" y="133" style="fill:var(--pk-ack1)">② ACK　seq=9001, ack=5002</text>
+          <text id="trace-label-fin2" class="trace-label" x="596" y="178" style="fill:var(--pk-fin2)">③ FIN　seq=9001, ack=5002</text>
+          <text id="trace-label-ack2" class="trace-label" x="232" y="223" style="fill:var(--pk-ack2)">④ ACK　seq=5002, ack=9002</text>
+
+          <!-- 客户端节点 -->
+          <g id="node-client">
+            <rect class="node-box" x="28" y="50" width="190" height="235" rx="14"/>
+            <text class="node-icon" x="48" y="90">💻</text>
+            <text class="node-title" x="88" y="84">客户端</text>
+            <text class="node-addr" x="88" y="102">10.0.0.1 : 51234</text>
+            <text class="badge-cap" x="48" y="150">当前 TCP 状态（主动关闭方）</text>
+            <rect id="badge-client" class="badge-rect" x="48" y="160" width="150" height="36" style="fill:var(--st-established)"/>
+            <text id="badge-client-t" class="badge-text" x="123" y="183" text-anchor="middle">ESTABLISHED</text>
+            <circle id="pulse-client" class="pulse" cx="218" cy="165" r="20" style="stroke:var(--accent)"/>
+          </g>
+
+          <!-- 服务器节点 -->
+          <g id="node-server">
+            <rect class="node-box" x="742" y="50" width="190" height="235" rx="14"/>
+            <text class="node-icon" x="762" y="90">🖥️</text>
+            <text class="node-title" x="802" y="84">服务器</text>
+            <text class="node-addr" x="802" y="102">10.0.0.2 : 80</text>
+            <text class="badge-cap" x="762" y="150">当前 TCP 状态（被动关闭方）</text>
+            <rect id="badge-server" class="badge-rect" x="762" y="160" width="150" height="36" style="fill:var(--st-established)"/>
+            <text id="badge-server-t" class="badge-text" x="837" y="183" text-anchor="middle">ESTABLISHED</text>
+            <circle id="pulse-server" class="pulse" cx="742" cy="165" r="20" style="stroke:var(--accent)"/>
+          </g>
+
+          <!-- TIME_WAIT 计时条（挂在客户端节点下方） -->
+          <g id="msl-timer" class="msl">
+            <text x="48" y="310">⏱ TIME_WAIT：等待 2×MSL</text>
+            <rect x="48" y="318" width="150" height="8" rx="4" style="fill:var(--bg-inset);stroke:var(--border)"/>
+            <rect class="msl-fill" x="48" y="318" width="150" height="8" rx="4" style="fill:var(--accent)"/>
+          </g>
+
+          <g id="pkt-layer"></g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 状态机区 -->
+    <div class="card" id="card-fsm">
+      <div class="card-hd">
+        <h2>🔁 TCP 连接释放状态机 <span class="tag">仅连接释放部分</span></h2>
+      </div>
+      <div class="card-bd fsm-wrap" style="padding:14px 16px 8px;">
+
+        <div class="fsm-owner"><span class="dot" style="background:var(--st-finwait1)"></span>客户端状态机（主动关闭）</div>
+        <svg class="fsm" id="fsm-client" viewBox="0 0 860 150">
+          <defs>
+            <marker id="mc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--link)"></path>
+            </marker>
+          </defs>
+          <g class="fsm-edge" data-edge="c1">
+            <path d="M145,72 L215,72" marker-end="url(#mc)"/>
+            <text x="180" y="52"><tspan x="180" dy="0">发送 FIN</tspan><tspan x="180" dy="12">seq=u</tspan></text>
+          </g>
+          <g class="fsm-edge" data-edge="c2">
+            <path d="M345,72 L415,72" marker-end="url(#mc)"/>
+            <text x="380" y="58"><tspan x="380" dy="0">收到 ACK</tspan></text>
+          </g>
+          <g class="fsm-edge" data-edge="c3">
+            <path d="M545,72 L615,72" marker-end="url(#mc)"/>
+            <text x="580" y="52"><tspan x="580" dy="0">收到 FIN</tspan><tspan x="580" dy="12">发送 ACK</tspan></text>
+          </g>
+          <g class="fsm-edge" data-edge="c4">
+            <path d="M730,72 L760,72" marker-end="url(#mc)"/>
+            <text x="745" y="52"><tspan x="745" dy="0">等待</tspan><tspan x="745" dy="12">2×MSL</tspan></text>
+          </g>
+          <g class="fsm-node" data-state="ESTABLISHED">
+            <rect x="15" y="52" width="130" height="40" rx="10"/>
+            <text x="80" y="77">ESTABLISHED</text>
+          </g>
+          <g class="fsm-node" data-state="FIN_WAIT_1">
+            <rect x="215" y="52" width="130" height="40" rx="10"/>
+            <text x="280" y="77">FIN_WAIT_1</text>
+          </g>
+          <g class="fsm-node" data-state="FIN_WAIT_2">
+            <rect x="415" y="52" width="130" height="40" rx="10"/>
+            <text x="480" y="77">FIN_WAIT_2</text>
+          </g>
+          <g class="fsm-node" data-state="TIME_WAIT">
+            <rect x="615" y="52" width="115" height="40" rx="10"/>
+            <text x="672" y="77">TIME_WAIT</text>
+          </g>
+          <g class="fsm-node" data-state="CLOSED">
+            <rect x="760" y="52" width="85" height="40" rx="10"/>
+            <text x="802" y="77">CLOSED</text>
+          </g>
+          <text x="15" y="128" font-size="9.5" style="fill:var(--text-3)">起点：连接已建立，数据传输完成</text>
+        </svg>
+
+        <div class="fsm-owner"><span class="dot" style="background:var(--st-closewait)"></span>服务器状态机（被动关闭）</div>
+        <svg class="fsm" id="fsm-server" viewBox="0 0 860 150">
+          <defs>
+            <marker id="ms" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" style="fill:var(--link)"></path>
+            </marker>
+          </defs>
+          <g class="fsm-edge" data-edge="s1">
+            <path d="M190,72 L280,72" marker-end="url(#ms)"/>
+            <text x="235" y="52"><tspan x="235" dy="0">收到 FIN</tspan><tspan x="235" dy="12">发送 ACK</tspan></text>
+          </g>
+          <g class="fsm-edge" data-edge="s2">
+            <path d="M430,72 L520,72" marker-end="url(#ms)"/>
+            <text x="475" y="52"><tspan x="475" dy="0">发送 FIN</tspan><tspan x="475" dy="12">seq=w</tspan></text>
+          </g>
+          <g class="fsm-edge" data-edge="s3">
+            <path d="M650,72 L730,72" marker-end="url(#ms)"/>
+            <text x="690" y="58"><tspan x="690" dy="0">收到 ACK</tspan></text>
+          </g>
+          <g class="fsm-node" data-state="ESTABLISHED">
+            <rect x="40" y="52" width="150" height="40" rx="10"/>
+            <text x="115" y="77">ESTABLISHED</text>
+          </g>
+          <g class="fsm-node" data-state="CLOSE_WAIT">
+            <rect x="280" y="52" width="150" height="40" rx="10"/>
+            <text x="355" y="77">CLOSE_WAIT</text>
+          </g>
+          <g class="fsm-node" data-state="LAST_ACK">
+            <rect x="520" y="52" width="130" height="40" rx="10"/>
+            <text x="585" y="77">LAST_ACK</text>
+          </g>
+          <g class="fsm-node" data-state="CLOSED">
+            <rect x="730" y="52" width="90" height="40" rx="10"/>
+            <text x="775" y="77">CLOSED</text>
+          </g>
+          <text x="40" y="128" font-size="9.5" style="fill:var(--text-3)">起点：连接已建立，等待应用层关闭</text>
+        </svg>
+      </div>
+      <div class="fsm-legend">
+        <span><i class="sw" style="background:var(--accent)"></i>当前状态</span>
+        <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>已经过</span>
+        <span><i class="sw" style="background:var(--bg-inset);border:1px solid var(--border);opacity:.6"></i>未到达</span>
+        <span style="color:var(--text-3)">注：此处为简化演示，省略了同时关闭（simultaneous close）等分支</span>
+      </div>
+    </div>
+
+    <!-- 信息面板 -->
+    <div class="card" id="card-detail">
+      <div class="card-hd">
+        <h2>🔍 详细信息 <span class="tag" id="detail-tag">报文解析</span></h2>
+      </div>
+      <div id="detail-body"></div>
+    </div>
+
+    <!-- 步骤说明 -->
+    <div class="card" id="card-step">
+      <div class="card-bd">
+        <div class="step-top">
+          <div>
+            <div class="step-title"><span class="step-no" id="step-no">STEP 0</span><span id="step-title">—</span></div>
+            <div class="step-desc" id="step-desc">—</div>
+            <div class="step-tip" id="step-tip" style="display:none"></div>
+          </div>
+        </div>
+        <div class="progress-row">
+          <div class="prog"><div class="prog-fill" id="prog-fill"></div></div>
+          <span class="prog-text" id="prog-text">0 / 0</span>
+        </div>
+        <div class="step-dots" id="step-dots"></div>
+      </div>
+    </div>
+
+    <!-- 控制台 -->
+    <div class="card" id="card-ctrl">
+      <div class="card-hd"><h2>🎛️ 控制面板</h2></div>
+      <div class="card-bd">
+        <div class="ctrl-btns">
+          <button class="btn" id="btn-prev">◀ 上一步</button>
+          <button class="btn primary" id="btn-play">▶ 播放</button>
+          <button class="btn" id="btn-next">下一步 ▶</button>
+          <button class="btn" id="btn-reset">⟲ 重置</button>
+        </div>
+        <div class="speed-row">
+          <label for="speed">速度</label>
+          <input type="range" id="speed" min="0.5" max="3" step="0.1" value="1.6"/>
+          <span id="speed-val">1.6s</span>
+        </div>
+        <div class="hotkeys">
+          <span><kbd>空格</kbd> 播放/暂停</span>
+          <span><kbd>S</kbd>/<kbd>→</kbd> 下一步</span>
+          <span><kbd>A</kbd>/<kbd>←</kbd> 上一步</span>
+          <span><kbd>R</kbd> 重置</span>
+          <span><kbd>T</kbd> 主题</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 报文日志 -->
+    <div class="card" id="card-log">
+      <div class="card-hd">
+        <h2>📜 报文日志 <span class="tag">tcpdump 风格</span></h2>
+      </div>
+      <div id="log-body"><div class="log-empty">（暂无记录，点击「下一步」或「播放」开始）</div></div>
+    </div>
+
+  </div>
+
+  <p class="footnote">
+    ⚠️ 教学简化说明：序号 u=5001、w=9001 为便于讲解的假设值（衔接三次握手后的数据传输结果）；
+    校验和、窗口缩放等选项未展开；实际实现中任何一端都可主动关闭，本演示以客户端主动关闭为例。
+  </p>
+</div>
+
+<script>
+/* ============================================================
+   3. JS 常量与工具函数
+   ============================================================ */
+'use strict';
+const SVGNS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function svg(tag, attrs, parent){
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+const STATE_COLOR = {
+  ESTABLISHED: 'var(--st-established)',
+  FIN_WAIT_1:  'var(--st-finwait1)',
+  FIN_WAIT_2:  'var(--st-finwait2)',
+  TIME_WAIT:   'var(--st-timewait)',
+  CLOSE_WAIT:  'var(--st-closewait)',
+  LAST_ACK:    'var(--st-lastack)',
+  CLOSED:      'var(--st-closed)'
+};
+
+const FSM_ORDER = {
+  client: ['ESTABLISHED','FIN_WAIT_1','FIN_WAIT_2','TIME_WAIT','CLOSED'],
+  server: ['ESTABLISHED','CLOSE_WAIT','LAST_ACK','CLOSED']
+};
+const FSM_EDGES = {
+  client: ['c1','c2','c3','c4'],
+  server: ['s1','s2','s3']
+};
+
+/* ============================================================
+   4. JS 数据定义（nodes / links / steps）
+   ------------------------------------------------------------
+   【简化演示】
+   · 假设三次握手后客户端下一序号 u=5001，服务器下一序号 w=9001
+   · FIN 报文同时携带 ACK（连接建立后所有报文均带 ACK）
+   ============================================================ */
+const nodes = {
+  client: { name:'客户端', addr:'10.0.0.1:51234' },
+  server: { name:'服务器', addr:'10.0.0.2:80' }
+};
+const links = { link1: { from:'client', to:'server' } };
+
+/* 四条飞行轨迹（对应四次挥手） */
+const TRACES = {
+  fin1: { x0:225, x1:735, y:100 },
+  ack1: { x0:735, x1:225, y:145 },
+  fin2: { x0:735, x1:225, y:190 },
+  ack2: { x0:225, x1:735, y:235 }
+};
+function tracePos(id, p){
+  const t = TRACES[id];
+  return { x: t.x0 + (t.x1 - t.x0) * p, y: t.y };
+}
+
+const STATE_INFO = {
+  ESTABLISHED: '连接已建立，数据传输完成，准备关闭。',
+  FIN_WAIT_1:  '主动关闭方已发送 FIN，等待对方对自己 FIN 的确认（ACK）。',
+  FIN_WAIT_2:  '主动关闭方已收到对方对自己 FIN 的 ACK，等待对方发送它的 FIN。',
+  TIME_WAIT:   '主动关闭方收到对方 FIN 并回送 ACK 后，等待 2×MSL，确认最后一个 ACK 能到达对方，并让旧报文在网络中消失。',
+  CLOSE_WAIT:  '被动关闭方已收到对方 FIN 并回送 ACK，等待本端应用完成剩余工作、调用 close。',
+  LAST_ACK:    '被动关闭方已发送自己的 FIN，等待对方对这个 FIN 的最后确认。',
+  CLOSED:      '连接已完全关闭，资源释放。'
+};
+
+const SEGS = {
+  fin1: {
+    kind:'FIN', grad:'url(#g-fin1)', color:'var(--pk-fin1)', dir:'client → server',
+    srcPort:51234, dstPort:80, seq:5001, ack:9001, offset:5,
+    flags:{ CWR:0,ECE:0,URG:0,ACK:1,PSH:0,RST:0,SYN:0,FIN:1 }, flagsHex:'0x11',
+    window:65535, checksum:'0x0000（简化占位）', urgent:0,
+    explain:'第一次挥手。FIN=1 表示客户端请求关闭自己这一方的发送。seq=5001 是客户端的下一个序号（简化值）。注意：FIN 报文要消耗一个序号，因此客户端下次发送的序号是 5002。连接建立后所有报文都带 ACK，故这里 ACK=1，确认号 9001 表示期望服务器下次从 9001 开始发送。'
+  },
+  ack1: {
+    kind:'ACK', grad:'url(#g-ack1)', color:'var(--pk-ack1)', dir:'server → client',
+    srcPort:80, dstPort:51234, seq:9001, ack:5002, offset:5,
+    flags:{ CWR:0,ECE:0,URG:0,ACK:1,PSH:0,RST:0,SYN:0,FIN:0 }, flagsHex:'0x10',
+    window:65535, checksum:'0x0000（简化占位）', urgent:0,
+    explain:'第二次挥手。服务器确认客户端的 FIN：确认号 = 5001 + 1 = 5002（因为 FIN 消耗一个序号）。服务器自己的序号仍是 9001。此时客户端→服务器方向的发送通道关闭，但服务器→客户端方向仍可发送数据（半关闭状态），因此服务器不立即发 FIN，先进入 CLOSE_WAIT。'
+  },
+  fin2: {
+    kind:'FIN', grad:'url(#g-fin2)', color:'var(--pk-fin2)', dir:'server → client',
+    srcPort:80, dstPort:51234, seq:9001, ack:5002, offset:5,
+    flags:{ CWR:0,ECE:0,URG:0,ACK:1,PSH:0,RST:0,SYN:0,FIN:1 }, flagsHex:'0x11',
+    window:65535, checksum:'0x0000（简化占位）', urgent:0,
+    explain:'第三次挥手。服务器侧数据也发送完毕后，发送自己的 FIN=1，请求关闭服务器→客户端方向的发送。seq=9001（FIN 消耗此序号），仍带 ACK=1，确认号 5002。发送后服务器进入 LAST_ACK，只等客户端最后一个确认。'
+  },
+  ack2: {
+    kind:'ACK', grad:'url(#g-ack2)', color:'var(--pk-ack2)', dir:'client → server',
+    srcPort:51234, dstPort:80, seq:5002, ack:9002, offset:5,
+    flags:{ CWR:0,ECE:0,URG:0,ACK:1,PSH:0,RST:0,SYN:0,FIN:0 }, flagsHex:'0x10',
+    window:65535, checksum:'0x0000（简化占位）', urgent:0,
+    explain:'第四次挥手。客户端确认服务器的 FIN：确认号 = 9001 + 1 = 9002。客户端自己的序号是 5002（之前的 FIN 消耗了 5001）。发送后客户端进入 TIME_WAIT，等待 2×MSL；服务器收到该 ACK 后立即 CLOSED。'
+  }
+};
+
+const steps = [
+  { // 0
+    title:'初始状态',
+    desc:'连接已建立（三次握手完成），双向数据传输也已结束。客户端数据发送完毕，主动调用 close() 请求关闭连接。双方当前均处于 ESTABLISHED 状态。',
+    tip:'任何一端都可以主动关闭，本例以客户端主动关闭为例。',
+    snapshot:{
+      packets:[], traces:[],
+      nodeStates:{ client:'ESTABLISHED', server:'ESTABLISHED' },
+      fsm:{ client:{ state:'ESTABLISHED' }, server:{ state:'ESTABLISHED' } },
+      activeLinks:[], focus:{ type:'node', id:'client' }
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'数据传输完成，客户端准备主动关闭连接' }]
+  },
+  { // 1
+    title:'客户端发送 FIN（第 1 次挥手）',
+    desc:'客户端发送 FIN 报文：FIN=1，seq=5001（简化值），并携带 ACK=1 确认已收到的数据。发送后客户端进入 FIN_WAIT_1，客户端→服务器方向的发送通道开始关闭。',
+    tip:'FIN 消耗一个序号 ⇒ 客户端下一个序号是 5002。',
+    snapshot:{
+      packets:[{ id:'fin1', progress:0.06 }], traces:['fin1'],
+      nodeStates:{ client:'FIN_WAIT_1', server:'ESTABLISHED' },
+      fsm:{ client:{ state:'FIN_WAIT_1', activeEdge:'c1' }, server:{ state:'ESTABLISHED' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'fin1' }
+    },
+    logs:[{ cls:'fin1', f:'[F.]', m:'10.0.0.1.51234 > 10.0.0.2.80: Flags [F.], seq 5001, ack 9001, win 65535, length 0' }]
+  },
+  { // 2
+    title:'FIN 到达服务器',
+    desc:'服务器收到 FIN，得知客户端已无数据要发送。服务器将针对该 FIN 返回确认，但自己可能还有数据未发完，因此不会立刻关闭。',
+    snapshot:{
+      packets:[{ id:'fin1', progress:0.94 }], traces:['fin1'],
+      nodeStates:{ client:'FIN_WAIT_1', server:'ESTABLISHED' },
+      fsm:{ client:{ state:'FIN_WAIT_1' }, server:{ state:'ESTABLISHED' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'fin1' }, arriveAt:'server'
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'服务器收到 FIN，准备确认（客户端方向发送结束）' }]
+  },
+  { // 3
+    title:'服务器发送 ACK（第 2 次挥手）',
+    desc:'服务器发送确认报文：ACK=1，确认号=5002（=客户端 FIN 序号 5001 + 1）。发送后服务器进入 CLOSE_WAIT，等待本端应用完成剩余数据发送。此时进入半关闭状态：客户端不再发，服务器仍可发。',
+    tip:'“半关闭”：一个方向已关，另一个方向仍可传输。',
+    snapshot:{
+      packets:[{ id:'ack1', progress:0.06 }], traces:['fin1','ack1'],
+      nodeStates:{ client:'FIN_WAIT_1', server:'CLOSE_WAIT' },
+      fsm:{ client:{ state:'FIN_WAIT_1' }, server:{ state:'CLOSE_WAIT', activeEdge:'s1' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'ack1' }
+    },
+    logs:[{ cls:'ack1', f:'[.]', m:'10.0.0.2.80 > 10.0.0.1.51234: Flags [.], seq 9001, ack 5002, win 65535, length 0' }]
+  },
+  { // 4
+    title:'ACK 到达客户端',
+    desc:'客户端收到服务器对 FIN 的确认（ack=5002），知道自己发起的关闭已被确认，进入 FIN_WAIT_2，等待服务器发送它的 FIN。',
+    snapshot:{
+      packets:[{ id:'ack1', progress:0.94 }], traces:['fin1','ack1'],
+      nodeStates:{ client:'FIN_WAIT_2', server:'CLOSE_WAIT' },
+      fsm:{ client:{ state:'FIN_WAIT_2', activeEdge:'c2' }, server:{ state:'CLOSE_WAIT' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'ack1' }, arriveAt:'client'
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'客户端收到 ACK，进入 FIN_WAIT_2，等待服务器 FIN' }]
+  },
+  { // 5
+    title:'服务器发送 FIN（第 3 次挥手）',
+    desc:'服务器侧数据也发送完毕，调用 close() 发送自己的 FIN：FIN=1，seq=9001，ACK=1，确认号=5002。发送后服务器进入 LAST_ACK，只等待客户端最后的确认。',
+    tip:'两次挥手之间可能间隔一段时间（服务器还要发剩余数据）。',
+    snapshot:{
+      packets:[{ id:'fin2', progress:0.06 }], traces:['fin1','ack1','fin2'],
+      nodeStates:{ client:'FIN_WAIT_2', server:'LAST_ACK' },
+      fsm:{ client:{ state:'FIN_WAIT_2' }, server:{ state:'LAST_ACK', activeEdge:'s2' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'fin2' }
+    },
+    logs:[{ cls:'fin2', f:'[F.]', m:'10.0.0.2.80 > 10.0.0.1.51234: Flags [F.], seq 9001, ack 5002, win 65535, length 0' }]
+  },
+  { // 6
+    title:'FIN 到达客户端',
+    desc:'客户端收到服务器的 FIN，得知服务器方向也请求关闭。客户端需要对该 FIN 回送确认，并准备进入 TIME_WAIT。',
+    snapshot:{
+      packets:[{ id:'fin2', progress:0.94 }], traces:['fin1','ack1','fin2'],
+      nodeStates:{ client:'FIN_WAIT_2', server:'LAST_ACK' },
+      fsm:{ client:{ state:'FIN_WAIT_2' }, server:{ state:'LAST_ACK' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'fin2' }, arriveAt:'client'
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'客户端收到服务器 FIN，准备回送最后的 ACK' }]
+  },
+  { // 7
+    title:'客户端发送 ACK（第 4 次挥手）',
+    desc:'客户端发送最后一个确认：ACK=1，seq=5002（之前的 FIN 消耗了 5001），确认号=9002（=服务器 FIN 序号 9001 + 1）。发送后客户端进入 TIME_WAIT，而非立即关闭。',
+    tip:'为什么不直接 CLOSED？需要等待 2×MSL（见下一步）。',
+    snapshot:{
+      packets:[{ id:'ack2', progress:0.06 }], traces:['fin1','ack1','fin2','ack2'],
+      nodeStates:{ client:'TIME_WAIT', server:'LAST_ACK' },
+      fsm:{ client:{ state:'TIME_WAIT', activeEdge:'c3' }, server:{ state:'LAST_ACK' } },
+      activeLinks:['link1'], focus:{ type:'packet', id:'ack2' }
+    },
+    logs:[{ cls:'ack2', f:'[.]', m:'10.0.0.1.51234 > 10.0.0.2.80: Flags [.], seq 5002, ack 9002, win 65535, length 0' }]
+  },
+  { // 8
+    title:'ACK 到达服务器',
+    desc:'服务器收到客户端的最后一个 ACK，确认号校验通过，服务器进入 CLOSED，连接在服务器一侧关闭。但客户端此时仍在 TIME_WAIT。',
+    snapshot:{
+      packets:[{ id:'ack2', progress:0.94 }], traces:['fin1','ack1','fin2','ack2'],
+      nodeStates:{ client:'TIME_WAIT', server:'CLOSED' },
+      fsm:{ client:{ state:'TIME_WAIT' }, server:{ state:'CLOSED', activeEdge:'s3' } },
+      activeLinks:['link1'], focus:{ type:'node', id:'server' }, arriveAt:'server'
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'服务器收到 ACK，进入 CLOSED（服务器一侧关闭完成）' }]
+  },
+  { // 9
+    title:'TIME_WAIT → 连接释放完成',
+    desc:'客户端在 TIME_WAIT 状态等待 2×MSL（最长报文段寿命的两倍）：一是确保自己最后的 ACK 能到达服务器，若丢失可让服务器重发 FIN；二是让本连接在网络中的旧报文全部消失，避免影响复用相同四元组的新连接。计时结束后，客户端进入 CLOSED，连接完全释放。',
+    tip:'为什么要四次挥手？——TCP 全双工，两个方向要分别关闭，每个方向都需 FIN + ACK，共 4 次。',
+    snapshot:{
+      packets:[], traces:['fin1','ack1','fin2','ack2'],
+      nodeStates:{ client:'CLOSED', server:'CLOSED' },
+      fsm:{ client:{ state:'CLOSED', activeEdge:'c4' }, server:{ state:'CLOSED' } },
+      activeLinks:['link1'], focus:{ type:'summary' }, showTimer:true
+    },
+    logs:[{ cls:'sys', f:'SYS', m:'客户端等待 2×MSL 后进入 CLOSED，连接释放完成' }]
+  }
+];
+
+/* ============================================================
+   5. JS 全局状态与 DOM 引用
+   ============================================================ */
+let currentIndex = 0;
+let playing = false;
+let playTimer = null;
+let locked = false;
+const pktEls = {};
+const pktShown = { fin1:false, ack1:false, fin2:false, ack2:false };
+let lastRenderedIndex = -1;
+
+const el = {
+  prev: $('btn-prev'), play: $('btn-play'), next: $('btn-next'), reset: $('btn-reset'),
+  theme: $('btn-theme'), speed: $('speed'), speedVal: $('speed-val'),
+  stepNo: $('step-no'), stepTitle: $('step-title'), stepDesc: $('step-desc'), stepTip: $('step-tip'),
+  progFill: $('prog-fill'), progText: $('prog-text'), dots: $('step-dots'),
+  detailBody: $('detail-body'), detailTag: $('detail-tag'), logBody: $('log-body'),
+  badgeClient: $('badge-client'), badgeClientT: $('badge-client-t'),
+  badgeServer: $('badge-server'), badgeServerT: $('badge-server-t'),
+  pulseClient: $('pulse-client'), pulseServer: $('pulse-server'),
+  pktLayer: $('pkt-layer'), mslTimer: $('msl-timer')
+};
+
+/* ============================================================
+   6. JS 主题管理
+   ============================================================ */
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  el.theme.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+function toggleTheme(){
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try{ localStorage.setItem('tcp-theme', next); }catch(e){}
+}
+function initTheme(){
+  let saved = 'light';
+  try{ saved = localStorage.getItem('tcp-theme') || 'light'; }catch(e){}
+  applyTheme(saved);
+}
+
+/* ============================================================
+   7. JS 核心渲染层（renderState）—— 幂等
+   ============================================================ */
+function buildPackets(){
+  for (const id of ['fin1','ack1','fin2','ack2']){
+    const s = SEGS[id];
+    const g = svg('g', { class:'pkt', id:'pkt-'+id, style:'opacity:0' }, el.pktLayer);
+    svg('rect', { class:'pkt-body', x:-56, y:-30, width:112, height:60, rx:10,
+                  fill:s.grad, stroke:'rgba(255,255,255,.55)' }, g);
+    const kind = svg('text', { class:'pkt-kind', x:0, y:-9, 'text-anchor':'middle' }, g);
+    kind.textContent = s.kind;
+    const sq = svg('text', { class:'pkt-seq', x:0, y:7, 'text-anchor':'middle' }, g);
+    sq.textContent = 'seq=' + s.seq;
+    const aq = svg('text', { class:'pkt-seq', x:0, y:21, 'text-anchor':'middle' }, g);
+    aq.textContent = 'ack=' + s.ack;
+    const ar = svg('path', { class:'pkt-arrow' }, g);
+    ar.setAttribute('d', s.dir === 'client → server'
+      ? 'M46,-2 l12,6 l-12,6 z' : 'M-46,-2 l-12,6 l12,6 z');
+    pktEls[id] = g;
+  }
+}
+
+function setBadge(side, state){
+  el['badge'+(side==='client'?'Client':'Server')].style.fill = STATE_COLOR[state];
+  el['badge'+(side==='client'?'Client':'Server')+'T'].textContent = state;
+}
+
+function firePulse(side){
+  const c = side === 'client' ? el.pulseClient : el.pulseServer;
+  c.classList.remove('run');
+  void c.getBoundingClientRect();
+  c.classList.add('run');
+}
+
+function fireTimer(){
+  const t = el.mslTimer;
+  t.classList.remove('run');
+  void t.getBoundingClientRect();
+  t.classList.add('run');
+}
+
+function renderFSM(side, info){
+  const order = FSM_ORDER[side];
+  const idx = order.indexOf(info.state);
+  const root = $( 'fsm-' + side );
+  order.forEach((st, i) => {
+    const node = root.querySelector('[data-state="' + st + '"]');
+    node.classList.toggle('done', i < idx);
+    node.classList.toggle('current', i === idx);
+    node.classList.toggle('future', i > idx);
+    if (i === idx){
+      node.querySelector('rect').style.fill = STATE_COLOR[st];
+      node.querySelector('rect').style.stroke = STATE_COLOR[st];
+    } else {
+      node.querySelector('rect').style.fill = '';
+      node.querySelector('rect').style.stroke = '';
+    }
+  });
+  FSM_EDGES[side].forEach((eid, i) => {
+    const edge = root.querySelector('[data-edge="' + eid + '"]');
+    const done = i < idx;
+    const active = eid === info.activeEdge;
+    edge.classList.toggle('done', done);
+    edge.classList.toggle('active', active);
+    const p = edge.querySelector('path');
+    p.style.stroke = active ? STATE_COLOR[order[i+1]] : '';
+    edge.querySelectorAll('text').forEach(t => {
+      t.style.fill = active ? STATE_COLOR[order[i+1]] : '';
+    });
+  });
+}
+
+function flagCellsHTML(flags){
+  const names = ['CWR','ECE','URG','ACK','PSH','RST','SYN','FIN'];
+  const hitColors = { ACK:'var(--pk-ack2)', FIN:'var(--pk-fin1)' };
+  return '<div class="flag-row">' + names.map(n => {
+    const v = flags[n];
+    const style = v && hitColors[n] ? ' style="--fc:' + hitColors[n] + '"' : (v ? ' style="--fc:var(--accent)"' : '');
+    return '<div class="flag-cell' + (v ? ' hit' : '') + '"' + style + '>'
+         + '<div class="n">' + n + '</div><div class="b">' + v + '</div></div>';
+  }).join('') + '</div>';
+}
+
+function renderDetail(focus, snap){
+  let tag = '详情', html = '';
+  if (focus.type === 'packet'){
+    tag = '报文段解析';
+    const s = SEGS[focus.id];
+    html += '<span class="d-chip" style="background:' + s.color + '">📦 ' + s.kind + '　' + s.dir + '</span>';
+    html += '<div class="d-sec">TCP 头部字段</div>';
+    html += '<table class="kv">'
+      + '<tr><td class="k">源端口（16位）</td><td class="v">' + s.srcPort + '</td></tr>'
+      + '<tr><td class="k">目的端口（16位）</td><td class="v">' + s.dstPort + '</td></tr>'
+      + '<tr><td class="k">序号 seq（32位）</td><td class="v">' + s.seq + '</td></tr>'
+      + '<tr><td class="k">确认号 ack（32位）</td><td class="v">' + s.ack + '</td></tr>'
+      + '<tr><td class="k">数据偏移 / 头部长度</td><td class="v">' + s.offset + ' × 4B = ' + (s.offset*4) + ' 字节</td></tr>'
+      + '<tr><td class="k">标志位（8位）</td><td class="v">' + s.flagsHex + '</td></tr>'
+      + '<tr><td class="k">窗口大小（16位）</td><td class="v">' + s.window + '</td></tr>'
+      + '<tr><td class="k">校验和（16位）</td><td class="v">' + s.checksum + '</td></tr>'
+      + '<tr><td class="k">紧急指针（16位）</td><td class="v">' + s.urgent + '</td></tr>'
+      + '<tr><td class="k">数据载荷</td><td class="v">0 字节</td></tr>'
+      + '</table>';
+    html += '<div class="d-sec">标志位位图</div>' + flagCellsHTML(s.flags);
+    html += '<div class="d-sec">教学解释</div><div class="explain">' + s.explain + '</div>';
+  }
+  else if (focus.type === 'node'){
+    tag = '节点状态';
+    const n = nodes[focus.id];
+    const st = snap.nodeStates[focus.id];
+    html += '<span class="d-chip" style="background:' + STATE_COLOR[st] + '">🖥️ ' + n.name + '</span>';
+    html += '<table class="kv">'
+      + '<tr><td class="k">地址</td><td class="v">' + n.addr + '</td></tr>'
+      + '<tr><td class="k">当前状态</td><td class="v">' + st + '</td></tr>'
+      + '</table>';
+    html += '<div class="d-sec">状态含义</div><div class="explain">' + STATE_INFO[st] + '</div>';
+  }
+  else if (focus.type === 'summary'){
+    tag = '挥手总结';
+    html += '<span class="d-chip" style="background:var(--st-closed)">✅ 连接释放完成</span>';
+    html += '<div class="d-sec">四次挥手回顾</div>';
+    html += '<table class="sum-table"><thead><tr><th>#</th><th>方向</th><th>报文</th><th>seq</th><th>ack</th><th>发送方状态变化</th></tr></thead><tbody>'
+      + '<tr><td>1</td><td>客户→服务</td><td class="mono">FIN+ACK</td><td class="mono">5001</td><td class="mono">9001</td><td>ESTABLISHED → FIN_WAIT_1</td></tr>'
+      + '<tr><td>2</td><td>服务→客户</td><td class="mono">ACK</td><td class="mono">9001</td><td class="mono">5002</td><td>ESTABLISHED → CLOSE_WAIT</td></tr>'
+      + '<tr><td>3</td><td>服务→客户</td><td class="mono">FIN+ACK</td><td class="mono">9001</td><td class="mono">5002</td><td>CLOSE_WAIT → LAST_ACK</td></tr>'
+      + '<tr><td>4</td><td>客户→服务</td><td class="mono">ACK</td><td class="mono">5002</td><td class="mono">9002</td><td>LAST_ACK → CLOSED</td></tr>'
+      + '</tbody></table>';
+    html += '<div class="d-sec">双方最终状态</div>';
+    html += '<table class="kv">'
+      + '<tr><td class="k">客户端</td><td class="v" style="color:var(--st-closed)">CLOSED（TIME_WAIT 2×MSL 后）</td></tr>'
+      + '<tr><td class="k">服务器</td><td class="v" style="color:var(--st-closed)">CLOSED（收到最后 ACK 立即）</td></tr>'
+      + '</table>';
+    html += '<div class="explain"><b>为什么需要四次挥手？</b>TCP 是全双工的，连接的两个方向必须分别关闭：每个方向各需要一个 FIN 和对它的 ACK，所以共 4 次。<br><br><b>为什么主动关闭方要 TIME_WAIT 等待 2×MSL？</b>① 保证自己发送的最后一个 ACK 能到达对方——若丢失，对方会重发 FIN，本方还能重新确认；② 等待本连接的旧报文在网络中自然消失，防止它们被复用相同四元组的新连接错误接收。2×MSL 足以覆盖“一去一回”的最长时间。</div>';
+  }
+  el.detailTag.textContent = tag;
+  el.detailBody.innerHTML = html || '<div class="explain">无详细信息。</div>';
+}
+
+function renderLogs(upTo){
+  let lines = '';
+  let count = 0;
+  for (let i = 0; i <= upTo; i++){
+    (steps[i].logs || []).forEach(l => {
+      count++;
+      lines += '<div class="log-line ' + l.cls + '">'
+             + '<span class="t">' + String(i).padStart(2,'0') + '</span>'
+             + '<span class="f">' + l.f + '</span>'
+             + '<span class="m">' + l.m + '</span></div>';
+    });
+  }
+  el.logBody.innerHTML = count
+    ? lines
+    : '<div class="log-empty">（暂无记录，点击「下一步」或「播放」开始）</div>';
+  el.logBody.scrollTop = el.logBody.scrollHeight;
+}
+
+function renderStepText(i){
+  const s = steps[i];
+  el.stepNo.textContent = 'STEP ' + i;
+  el.stepTitle.textContent = s.title;
+  el.stepDesc.textContent = s.desc;
+  if (s.tip){ el.stepTip.style.display = 'block'; el.stepTip.innerHTML = '<b>要点：</b>' + s.tip; }
+  else el.stepTip.style.display = 'none';
+  const pct = (i / (steps.length - 1)) * 100;
+  el.progFill.style.width = pct + '%';
+  el.progText.textContent = (i+1) + ' / ' + steps.length;
+  [...el.dots.children].forEach((d, di) => {
+    d.classList.toggle('cur', di === i);
+    d.classList.toggle('past', di < i);
+  });
+}
+
+/* ---- 主渲染函数（幂等） ---- */
+function renderState(snap, animate){
+  const activeMap = {};
+  snap.packets.forEach(p => activeMap[p.id] = p.progress);
+
+  /* 报文卡片：隐藏→出现 / 可见→可见 / 出现→隐藏 / 瞬间落位 */
+  for (const id in pktEls){
+    const g = pktEls[id];
+    const willShow = (id in activeMap);
+    const wasShown = pktShown[id];
+
+    if (!animate){
+      g.classList.add('snap');
+      if (willShow){
+        const pos = tracePos(id, activeMap[id]);
+        g.style.transform = 'translate(' + pos.x + 'px,' + pos.y + 'px)';
+        g.style.opacity = '1';
+      } else {
+        g.style.opacity = '0';
+      }
+      pktShown[id] = willShow;
+      continue;
+    }
+
+    if (willShow){
+      const pos = tracePos(id, activeMap[id]);
+      const tf = 'translate(' + pos.x + 'px,' + pos.y + 'px)';
+      if (!wasShown){
+        g.classList.add('snap');
+        g.style.transform = tf;
+        g.style.opacity = '0';
+        void g.getBoundingClientRect();
+        g.classList.remove('snap');
+        g.style.opacity = '1';
+      } else {
+        g.classList.remove('snap');
+        g.style.transform = tf;
+        g.style.opacity = '1';
+      }
+      pktShown[id] = true;
+    } else {
+      g.classList.remove('snap');
+      g.style.opacity = '0';
+      pktShown[id] = false;
+    }
+  }
+
+  /* 轨迹 */
+  for (const id in TRACES){
+    const on = snap.traces.includes(id);
+    $('trace-' + id).classList.toggle('on', on);
+    $('trace-label-' + id).classList.toggle('on', on);
+  }
+  /* 节点徽章 */
+  setBadge('client', snap.nodeStates.client);
+  setBadge('server', snap.nodeStates.server);
+  /* 状态机 */
+  renderFSM('client', snap.fsm.client);
+  renderFSM('server', snap.fsm.server);
+  /* TIME_WAIT 计时条 */
+  if (snap.showTimer){
+    el.mslTimer.style.opacity = '1';
+    fireTimer();
+  } else {
+    el.mslTimer.style.opacity = '0';
+    el.mslTimer.classList.remove('run');
+  }
+  /* 信息面板 */
+  renderDetail(snap.focus, snap);
+}
+
+/* ============================================================
+   8. JS 状态机与控制层（goToStep / updateControls）
+   ============================================================ */
+function getDurationMs(){ return parseFloat(el.speed.value) * 1000; }
+
+function updateControls(){
+  el.prev.disabled = currentIndex === 0;
+  el.next.disabled = currentIndex === steps.length - 1;
+  el.play.textContent = playing ? '⏸ 暂停' : '▶ 播放';
+}
+
+function goToStep(index, options){
+  options = options || {};
+  index = clamp(index, 0, steps.length - 1);
+  const animate = !!options.animate;
+  const snap = steps[index].snapshot;
+  const changed = index !== lastRenderedIndex;
+
+  currentIndex = index;
+  renderState(snap, animate);
+  renderLogs(index);
+  renderStepText(index);
+  updateControls();
+
+  if (animate && changed && snap.arriveAt){ firePulse(snap.arriveAt); }
+  lastRenderedIndex = index;
+}
+
+function play(){
+  if (playing) return;
+  if (currentIndex >= steps.length - 1) goToStep(0, { animate:false });
+  playing = true;
+  updateControls();
+  tick();
+}
+function tick(){
+  if (!playing) return;
+  playTimer = setTimeout(() => {
+    if (!playing) return;
+    if (currentIndex < steps.length - 1){
+      goToStep(currentIndex + 1, { animate:true });
+      tick();
+    } else {
+      pause();
+    }
+  }, getDurationMs() * 1.25);
+}
+function pause(){
+  if (!playing) return;
+  playing = false;
+  clearTimeout(playTimer); playTimer = null;
+  renderState(steps[currentIndex].snapshot, false);
+  updateControls();
+}
+function reset(){
+  locked = true;
+  pause();
+  goToStep(0, { animate:false });
+  setTimeout(() => { locked = false; }, 60);
+}
+
+/* ============================================================
+   9. JS 交互绑定与快捷键逻辑
+   ============================================================ */
+function keyFlash(btn){
+  btn.classList.add('key-flash');
+  setTimeout(() => btn.classList.remove('key-flash'), 220);
+}
+
+function doPrev(){ goToStep(currentIndex - 1, { animate:false }); }
+function doNext(){ goToStep(currentIndex + 1, { animate:true }); }
+function doPlayPause(){ playing ? pause() : play(); }
+function doReset(){ reset(); }
+
+el.prev.addEventListener('click', () => doPrev());
+el.next.addEventListener('click', () => doNext());
+el.play.addEventListener('click', () => doPlayPause());
+el.reset.addEventListener('click', () => doReset());
+el.theme.addEventListener('click', () => toggleTheme());
+
+el.speed.addEventListener('input', () => {
+  const v = parseFloat(el.speed.value);
+  document.documentElement.style.setProperty('--anim-duration', v + 's');
+  el.speedVal.textContent = v.toFixed(1) + 's';
+});
+
+function buildDots(){
+  steps.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'sdot';
+    d.title = '跳到第 ' + i + ' 步：' + steps[i].title;
+    d.addEventListener('click', () => goToStep(i, { animate:true }));
+    el.dots.appendChild(d);
+  });
+}
+
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  const tag = t.tagName ? t.tagName.toLowerCase() : '';
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return;
+  if (document.hidden || locked) return;
+
+  switch (e.code){
+    case 'Space':
+      e.preventDefault(); doPlayPause(); keyFlash(el.play); break;
+    case 'KeyS': case 'ArrowRight':
+      e.preventDefault(); doNext(); keyFlash(el.next); break;
+    case 'KeyA': case 'ArrowLeft':
+      e.preventDefault(); doPrev(); keyFlash(el.prev); break;
+    case 'KeyR':
+      e.preventDefault(); doReset(); keyFlash(el.reset); break;
+    case 'KeyT':
+      e.preventDefault(); toggleTheme(); keyFlash(el.theme); break;
+  }
+});
+
+/* ============================================================
+   10. JS 初始化
+   ============================================================ */
+function init(){
+  initTheme();
+  buildPackets();
+  buildDots();
+  document.documentElement.style.setProperty('--anim-duration', el.speed.value + 's');
+  el.speedVal.textContent = parseFloat(el.speed.value).toFixed(1) + 's';
+  goToStep(0, { animate:false });
+}
+init();
+</script>
+</body>
+</html>
