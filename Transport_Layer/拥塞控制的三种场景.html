@@ -1,0 +1,1777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>拥塞控制三种场景 · 可交互动画演示</title>
+<style>
+/* ============================================================
+   1. CSS 样式（主题变量、布局、SVG 基础样式、过渡动画类、反馈类）
+   ============================================================ */
+:root{
+  --anim-duration: 900ms;
+
+  --bg: #eef2f7;
+  --panel: #ffffff;
+  --panel-2: #f4f7fb;
+  --text: #17202e;
+  --muted: #5b6b80;
+  --border: #d6dee9;
+
+  --primary: #2f6fed;
+  --primary-ink: #ffffff;
+  --primary-soft: #dce8ff;
+
+  --link: #9db0c6;
+  --link-active: #2f6fed;
+  --node-host: #3b82f6;
+  --node-router: #8b5cf6;
+  --node-receiver: #10b981;
+
+  --pkt-a: #3b82f6;
+  --pkt-b: #f59e0b;
+  --pkt-c: #06b6d4;
+  --pkt-d: #ec4899;
+  --pkt-rtx: #ef4444;
+
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --focus: #fbbf24;
+
+  --shadow: 0 10px 30px rgba(23, 32, 46, .08);
+  --radius: 14px;
+}
+[data-theme="dark"]{
+  --bg: #0b1120;
+  --panel: #121a2c;
+  --panel-2: #0f1626;
+  --text: #e8eef8;
+  --muted: #93a4bd;
+  --border: #263349;
+
+  --primary: #5b93f5;
+  --primary-soft: #1c2c4d;
+
+  --link: #3a4c66;
+  --link-active: #60a5fa;
+  --node-host: #60a5fa;
+  --node-router: #a78bfa;
+  --node-receiver: #34d399;
+
+  --focus: #fbbf24;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+
+*{ box-sizing: border-box; }
+html, body{ height: 100%; }
+body{
+  margin: 0;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  transition: background .3s, color .3s;
+}
+
+/* ---------- 顶部 ---------- */
+header{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+header .brand{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+header .brand h1{
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: .5px;
+}
+header .brand p{
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tabs{
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.tab-btn{
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .2s, color .2s, border-color .2s, transform .1s;
+}
+.tab-btn:hover{ transform: translateY(-1px); }
+.tab-btn.active{
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+}
+.icon-btn{
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background .2s, transform .1s;
+}
+.icon-btn:hover{ transform: translateY(-1px); }
+
+/* ---------- 主体布局 ---------- */
+main{
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  padding: 14px 18px;
+  align-items: stretch;
+}
+@media (max-width: 980px){
+  main{ grid-template-columns: 1fr; }
+}
+
+.card{
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* ---------- 拓扑区 ---------- */
+.stage{
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 460px;
+}
+.stage svg{
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  display: block;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(47,111,237,.05), transparent 40%),
+    var(--panel-2);
+}
+.legend{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend .item{ display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch{
+  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+}
+.stage .note{
+  margin-top: 6px;
+}
+
+/* ---------- 信息面板 ---------- */
+.info{
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+.info h3{
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: .5px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.kv{
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.kv .row{
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.kv .row:last-child{ border-bottom: none; }
+.kv .row .k{ color: var(--muted); }
+.kv .row .v{ font-weight: 600; word-break: break-all; }
+
+.metric{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.metric .lab{
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metric .bar{
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.metric .bar i{
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  transition: width var(--anim-duration) ease;
+}
+.metric.ideal .bar i{ background: var(--primary); }
+.metric.actual .bar i{ background: var(--warn); }
+.metric .val{ font-size: 13px; font-weight: 700; }
+
+.note{
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  line-height: 1.6;
+}
+
+/* ---------- 底部：步骤说明 + 控制 ---------- */
+footer{
+  padding: 0 18px 18px;
+  display: grid;
+  gap: 12px;
+}
+.stepbar{
+  padding: 14px 16px;
+}
+.stepbar .title-row{
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stepbar #stepTitle{
+  font-size: 15px;
+  font-weight: 700;
+}
+.stepbar #stepCount{
+  font-size: 12px;
+  color: var(--muted);
+}
+.stepbar #stepDesc{
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.progress{
+  margin-top: 12px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.progress i{
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width .35s ease;
+}
+
+.controls{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+.btn{
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background .2s, transform .08s, opacity .2s;
+}
+.btn:hover:not(:disabled){ transform: translateY(-1px); }
+.btn:disabled{ opacity: .45; cursor: not-allowed; }
+.btn.primary{
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+}
+.btn kbd{
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.speed{
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.speed input{ width: 140px; }
+
+/* ---------- 快捷键按钮闪烁反馈 ---------- */
+.btn-flash{
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   SVG 元素样式与过渡动画类
+   ============================================================ */
+.node text,
+.link-label,
+.buffer-title,
+.buffer-count,
+.buffer-inf{
+  pointer-events: none;
+}
+
+/* 链路 */
+.link{
+  stroke: var(--link);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke .3s, stroke-width .3s;
+}
+.link.active{
+  stroke: var(--link-active);
+  stroke-width: 4;
+  stroke-dasharray: 8 6;
+  animation: dashflow 1s linear infinite;
+}
+.link.focused{
+  stroke: var(--focus);
+  stroke-width: 5;
+}
+@keyframes dashflow{ to{ stroke-dashoffset: -14; } }
+.link-label{
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 节点 */
+.node .body{
+  stroke: var(--border);
+  stroke-width: 2;
+  transition: fill .3s, stroke .3s, stroke-width .3s;
+}
+.node.type-host .body{ fill: var(--node-host); }
+.node.type-router .body{ fill: var(--node-router); }
+.node.type-receiver .body{ fill: var(--node-receiver); }
+
+.node .node-label{
+  fill: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* 节点状态类（教学状态，简化表示设备行为） */
+.node.sending .body,
+.node.forwarding .body,
+.node.receiving .body{
+  stroke: var(--ok);
+  stroke-width: 3.5;
+}
+.node.congested .body{
+  stroke: var(--warn);
+  stroke-width: 3.5;
+}
+.node.dropping .body{
+  stroke: var(--danger);
+  stroke-width: 4;
+}
+.node.focused .body{
+  stroke: var(--focus);
+  stroke-width: 4;
+}
+.node.buffer-full .body{
+  stroke: var(--danger);
+  stroke-width: 4;
+}
+
+/* 缓存区：标题、背景、计数 */
+.buffer-title{
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+.buffer-count,
+.buffer-inf{
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.buffer-bg{
+  fill: var(--panel-2);
+  stroke: var(--border);
+}
+
+/* 无穷缓存示意条 */
+.buffer-fill{
+  fill: var(--primary);
+  transition: width var(--anim-duration) ease, fill .3s ease;
+}
+.buffer-fill.warn{
+  fill: var(--warn);
+}
+
+/* 有限缓存格 */
+.buffer-slot-bg{
+  fill: var(--panel-2);
+  stroke: var(--border);
+}
+.buffer-slot-fill{
+  fill: var(--primary);
+  opacity: 0;
+  transition: opacity var(--anim-duration) ease, fill .3s ease;
+}
+.buffer-slot-fill.on{
+  opacity: 1;
+}
+.buffer-slot-fill.warn{
+  fill: var(--warn);
+}
+.buffer-slot-fill.full{
+  fill: var(--danger);
+}
+
+/* 数据包 */
+.packet{
+  cursor: pointer;
+  transition: transform var(--anim-duration) linear, opacity .25s ease;
+}
+.packet rect{
+  stroke: rgba(0,0,0,.25);
+  stroke-width: 1;
+}
+.packet text{
+  fill: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.packet .mark{
+  font-size: 10px;
+  font-weight: 700;
+}
+.packet.owner-A rect{ fill: var(--pkt-a); }
+.packet.owner-B rect{ fill: var(--pkt-b); }
+.packet.owner-C rect{ fill: var(--pkt-c); }
+.packet.owner-D rect{ fill: var(--pkt-d); }
+.packet.owner-rtx rect{ fill: var(--pkt-rtx); }
+.packet.retrans .mark{ fill: var(--pkt-rtx); }
+.packet.dropped rect{ fill: var(--danger); }
+.packet.dropped .mark{ fill: var(--danger); }
+.packet.focused rect{
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+.packet.no-transition{ transition: none !important; }
+.packet.packet-leave{ opacity: 0; }
+
+/* 容器级禁用过渡：用于回退 / 重置 / 暂停落位 */
+.no-anim,
+.no-anim *{
+  transition: none !important;
+  animation: none !important;
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     2. HTML 结构（UI 层）
+     ============================================================ -->
+<header>
+  <div class="brand">
+    <h1>拥塞控制三种场景 · 交互动画演示</h1>
+    <p>无穷缓存 / 有限缓存 / 多跳网络 —— 观察吞吐量如何被拥塞侵蚀（教学简化）</p>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab-btn active" data-scenario="scenario1">场景1 · 无穷缓存</button>
+    <button class="tab-btn" data-scenario="scenario2">场景2 · 有限缓存</button>
+    <button class="tab-btn" data-scenario="scenario3">场景3 · 多跳网络</button>
+  </div>
+  <button class="icon-btn" id="themeBtn" title="切换主题 (T)">🌓</button>
+</header>
+
+<main>
+  <!-- 拓扑区 -->
+  <section class="card stage">
+    <svg id="topology" viewBox="0 0 820 540" preserveAspectRatio="xMidYMid meet" role="img" aria-label="网络拓扑动画区"></svg>
+    <div class="legend">
+      <span class="item"><span class="swatch" style="background:var(--node-host)"></span>发送方</span>
+      <span class="item"><span class="swatch" style="background:var(--node-router)"></span>路由器</span>
+      <span class="item"><span class="swatch" style="background:var(--node-receiver)"></span>接收方</span>
+      <span class="item"><span class="swatch" style="background:var(--pkt-a)"></span>分组 A</span>
+      <span class="item"><span class="swatch" style="background:var(--pkt-b)"></span>分组 B</span>
+      <span class="item"><span class="swatch" style="background:var(--pkt-c)"></span>分组 C</span>
+      <span class="item"><span class="swatch" style="background:var(--pkt-d)"></span>分组 D</span>
+      <span class="item"><span class="swatch" style="background:var(--pkt-rtx)"></span>重传 / 丢失</span>
+      <span class="item"><span class="swatch" style="background:var(--primary)"></span>缓存占用</span>
+      <span class="item"><span class="swatch" style="background:var(--danger)"></span>缓存已满</span>
+    </div>
+    <div class="note">
+      缓存格 / 缓存条为简化演示：用于展示路由器缓存空间占用变化，不严格对应画面中每个可见分组。
+    </div>
+  </section>
+
+  <!-- 信息面板 -->
+  <aside class="card info">
+    <h3>当前焦点详情</h3>
+    <div id="focusBox" class="kv"></div>
+
+    <h3>吞吐量（每发送方）· 简化演示</h3>
+    <div>
+      <div class="metric ideal">
+        <div class="lab"><span>理想吞吐</span><span class="val" id="idealVal">—</span></div>
+        <div class="bar"><i id="idealBar"></i></div>
+      </div>
+      <div class="metric actual">
+        <div class="lab"><span>实际吞吐</span><span class="val" id="actualVal">—</span></div>
+        <div class="bar"><i id="actualBar"></i></div>
+      </div>
+      <div class="note" id="metricNote">吞吐量数值为教学示意，非真实测量值。</div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <!-- 步骤说明区 -->
+  <div class="card stepbar">
+    <div class="title-row">
+      <span id="stepTitle">—</span>
+      <span id="stepCount">—</span>
+    </div>
+    <div id="stepDesc">—</div>
+    <div class="progress"><i id="progressFill"></i></div>
+  </div>
+
+  <!-- 控制面板 -->
+  <div class="card controls">
+    <button class="btn" id="btnPrev"><kbd>A</kbd> 上一步</button>
+    <button class="btn primary" id="btnPlay"><kbd>空格</kbd> ▶ 播放</button>
+    <button class="btn" id="btnNext">下一步 <kbd>S</kbd></button>
+    <button class="btn" id="btnReset"><kbd>R</kbd> 重置</button>
+    <div class="speed">
+      <span>速度</span>
+      <input type="range" id="speedRange" min="0.5" max="3" step="0.25" value="1">
+      <span id="speedVal">1×</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   3. JS 常量与工具函数
+   ============================================================ */
+const SVGNS = "http://www.w3.org/2000/svg";
+const BASE_DURATION = 900;      // 1× 速度对应的动画时长 (ms)
+const PLAY_GAP = 450;           // 播放时每步之间的额外停顿 (ms)
+const THEME_KEY = "cc-demo-theme";
+
+function createSvg(tag, attrs = {}) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function forceReflow(el) { void el.getBoundingClientRect(); }
+
+/* 分组工厂：生成数据包快照对象（数据层辅助，非渲染逻辑） */
+function P(id, owner, from, to, progress, extra = {}) {
+  return {
+    id,
+    label: extra.label || id,
+    owner,                    // A / B / C / D / rtx，决定颜色
+    from, to, progress,       // 当前所在链路与进度 0~1
+    retrans: !!extra.retrans, // 是否重传分组
+    dropped: !!extra.dropped, // 是否被丢弃
+    fields: extra.fields || {}// 附加说明字段
+  };
+}
+
+/* ============================================================
+   4. JS 数据定义（nodes / links / steps）
+   说明：以下流程与数值为【简化演示】，用于直观表达教材
+   （Kurose/Ross《计算机网络》第3章拥塞控制原理）的核心思想，
+   不代表真实测量或具体协议实现。
+   ============================================================ */
+
+/* ---------- 场景 1：两个发送方 + 无穷大缓存路由器 ---------- */
+const SC1_NODES = [
+  { id: "host-a",   type: "host",     label: "发送方 A", x: 110, y: 110, bufferCap: 0 },
+  { id: "host-b",   type: "host",     label: "发送方 B", x: 110, y: 400, bufferCap: 0 },
+  { id: "router",   type: "router",   label: "路由",     x: 400, y: 245, bufferCap: Infinity },
+  { id: "receiver", type: "receiver", label: "接收方",   x: 700, y: 245, bufferCap: 0 }
+];
+const SC1_LINKS = [
+  { id: "la",   from: "host-a", to: "router",   rate: "R" },
+  { id: "lb",   from: "host-b", to: "router",   rate: "R" },
+  { id: "lout", from: "router", to: "receiver", rate: "R" }
+];
+const SC1_STEPS = [
+  {
+    title: "第 1 步：认识拓扑 —— 无穷大缓存",
+    desc: "发送方 A、B 通过一台具有【无穷大缓存】的路由器，共享一条速率为 R 的输出链路到达接收方。每个发送方的输入速率为 λin。",
+    snapshot: {
+      packets: [],
+      nodeStates: { "host-a": "IDLE", "host-b": "IDLE", "router": "IDLE", "receiver": "IDLE" },
+      activeLinks: [],
+      buffers: { router: 0 },
+      metrics: null,
+      focus: { type: "node", id: "router" }
+    }
+  },
+  {
+    title: "第 2 步：低速发送（λin 远小于 R/2）",
+    desc: "A、B 以较低速率发送分组。输入总和远小于输出链路容量，分组几乎无需排队即可通过。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "host-a", "router", 0.45, { fields: { "传输": "首次", "备注": "原始数据" } }),
+        P("B1", "B", "host-b", "router", 0.45, { fields: { "传输": "首次", "备注": "原始数据" } })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "FORWARDING", "receiver": "IDLE" },
+      activeLinks: ["la", "lb"],
+      buffers: { router: 0 },
+      metrics: { ideal: "λin", actual: "≈ λin", idealPct: 20, actualPct: 20, note: "负载很低，链路空闲充足。" },
+      focus: { type: "packet", id: "A1" }
+    }
+  },
+  {
+    title: "第 3 步：路由器排队转发（缓存无穷大）",
+    desc: "分组到达路由器后进入输出队列再转发。因为缓存无穷大，队列无论多长都不会溢出——分组绝不会因“缓存满”而丢失。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.35, { fields: { "状态": "转发中" } }),
+        P("B1", "B", "host-b", "router", 1.0, { fields: { "状态": "进入缓存排队" } })
+      ],
+      nodeStates: { "host-a": "IDLE", "host-b": "SENDING", "router": "FORWARDING", "receiver": "RECEIVING" },
+      activeLinks: ["lb", "lout"],
+      buffers: { router: 1 },
+      metrics: { ideal: "λin", actual: "≈ λin", idealPct: 22, actualPct: 22, note: "缓存无穷大 ⇒ 零丢包。" },
+      focus: { type: "node", id: "router" }
+    }
+  },
+  {
+    title: "第 4 步：理想情况 —— λin ≤ R/2",
+    desc: "若暂不考虑重传开销：当每个发送方的输入速率不超过 R/2 时，输出链路不饱和，每个发送方的吞吐量就等于其输入速率 λin。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.85),
+        P("B1", "B", "router", "receiver", 0.3),
+        P("A2", "A", "host-a", "router", 0.55)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "FORWARDING", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lb", "lout"],
+      buffers: { router: 1 },
+      metrics: { ideal: "λin", actual: "λin", idealPct: 35, actualPct: 35, note: "理想吞吐 = 输入速率，无瓶颈。" },
+      focus: { type: "metrics" }
+    }
+  },
+  {
+    title: "第 5 步：理想情况 —— λin > R/2（瓶颈出现）",
+    desc: "当 λin 超过 R/2，两个发送方想发送的总和超过输出链路容量 R。理想情况下每个发送方最多只能分得 R/2，缓存中开始持续排队。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.9),
+        P("B1", "B", "router", "receiver", 0.55),
+        P("A2", "A", "router", "receiver", 0.2),
+        P("B2", "B", "host-b", "router", 1.0),
+        P("A3", "A", "host-a", "router", 0.6)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lb", "lout"],
+      buffers: { router: 3 },
+      metrics: { ideal: "R/2", actual: "R/2", idealPct: 50, actualPct: 50, note: "输出链路成为瓶颈，理想上限为 R/2。" },
+      focus: { type: "node", id: "router" }
+    }
+  },
+  {
+    title: "第 6 步：真实机制 —— 超时与重传",
+    desc: "真实发送方依赖超时重传。负载升高时排队时延增大、确认迟到，发送方可能误判丢包而重传。此处为简化演示：红色带 ↻ 的分组表示重传副本。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.7),
+        P("B1", "B", "router", "receiver", 0.35),
+        P("A1r", "rtx", "host-a", "router", 0.35, { label: "A1′", retrans: true, fields: { "类型": "重传分组", "原分组": "A1" } })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lout"],
+      buffers: { router: 2 },
+      metrics: { ideal: "R/2", actual: "< R/2", idealPct: 50, actualPct: 44, note: "重传分组开始占用带宽。" },
+      focus: { type: "packet", id: "A1r" }
+    }
+  },
+  {
+    title: "第 7 步：实际吞吐量低于理想值",
+    desc: "重传分组占用了本可传输新数据的带宽。因此即使缓存无穷大、从不丢包，实际吞吐量仍低于理想吞吐量；负载越接近容量，差距越大。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.8),
+        P("B1", "B", "router", "receiver", 0.45),
+        P("A2", "A", "router", "receiver", 0.1),
+        P("A1r", "rtx", "router", "receiver", 0.3, { label: "A1′", retrans: true })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lb", "lout"],
+      buffers: { router: 4 },
+      metrics: { ideal: "R/2", actual: "< R/2", idealPct: 50, actualPct: 36, note: "带宽被重传占用，实际吞吐下滑。" },
+      focus: { type: "metrics" }
+    }
+  },
+  {
+    title: "第 8 步：结论 —— 无穷缓存不能阻止吞吐下降",
+    desc: "无穷大缓存消除了“缓存满导致丢包”，却无法消除重传带来的带宽浪费：实际吞吐曲线始终落在理想曲线下方。要看清丢包对拥塞的放大作用，请进入场景 2（有限缓存）。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.6),
+        P("B1", "B", "router", "receiver", 0.25)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["lout"],
+      buffers: { router: 4 },
+      metrics: { ideal: "R/2", actual: "< R/2", idealPct: 50, actualPct: 36, note: "不丢包 ≠ 不拥塞。" },
+      focus: { type: "node", id: "router" }
+    }
+  }
+];
+
+/* ---------- 场景 2：两个发送方 + 有限缓存路由器 ---------- */
+const SC2_NODES = [
+  { id: "host-a",   type: "host",     label: "发送方 A", x: 110, y: 110, bufferCap: 0 },
+  { id: "host-b",   type: "host",     label: "发送方 B", x: 110, y: 400, bufferCap: 0 },
+  { id: "router",   type: "router",   label: "路由",     x: 400, y: 245, bufferCap: 6 },
+  { id: "receiver", type: "receiver", label: "接收方",   x: 700, y: 245, bufferCap: 0 }
+];
+const SC2_STEPS = [
+  {
+    title: "第 1 步：认识拓扑 —— 有限缓存",
+    desc: "与场景 1 相同的结构，但路由器缓存【有限】（此处为简化演示：设容量为 6 个分组）。缓存满时，新到达的分组将被丢弃。",
+    snapshot: {
+      packets: [],
+      nodeStates: { "host-a": "IDLE", "host-b": "IDLE", "router": "IDLE", "receiver": "IDLE" },
+      activeLinks: [],
+      buffers: { router: 0 },
+      metrics: null,
+      focus: { type: "node", id: "router" }
+    }
+  },
+  {
+    title: "第 2 步：低速发送 —— 缓存空闲",
+    desc: "λin 较小时，分组到达即可转发，缓存占用很低，无丢失，吞吐量约等于输入速率。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "host-a", "router", 0.5),
+        P("B1", "B", "host-b", "router", 0.5)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "FORWARDING", "receiver": "IDLE" },
+      activeLinks: ["la", "lb"],
+      buffers: { router: 0 },
+      metrics: { ideal: "λin", actual: "≈ λin", idealPct: 20, actualPct: 20, note: "低负载，缓存充足。" },
+      focus: { type: "packet", id: "A1" }
+    }
+  },
+  {
+    title: "第 3 步：负载增加 —— 缓存开始堆积",
+    desc: "λin 增大，输出链路逐渐饱和，来不及转发的分组在缓存中累积，占用持续上升。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.7),
+        P("B1", "B", "router", "receiver", 0.3),
+        P("A2", "A", "host-a", "router", 0.8),
+        P("B2", "B", "host-b", "router", 0.7)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lb", "lout"],
+      buffers: { router: 4 },
+      metrics: { ideal: "R/2", actual: "≈ R/2", idealPct: 50, actualPct: 48, note: "缓存占用升高，接近饱和。" },
+      focus: { type: "node", id: "router" }
+    }
+  },
+  {
+    title: "第 4 步：缓存溢出 —— 分组被丢弃",
+    desc: "缓存已满（6/6）。此时新到达的分组 B3 无处存放，被路由器直接丢弃（红色 ✕）。它此前占用链路与排队的努力全部作废。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.85),
+        P("B3", "rtx", "host-b", "router", 1.0, { label: "B3", dropped: true, fields: { "命运": "缓存满，被丢弃" } })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "DROPPING", "receiver": "RECEIVING" },
+      activeLinks: ["lb"],
+      buffers: { router: 6 },
+      metrics: { ideal: "R/2", actual: "下降中", idealPct: 50, actualPct: 42, note: "首次丢包：有效数据减少。" },
+      focus: { type: "packet", id: "B3" }
+    }
+  },
+  {
+    title: "第 5 步：发送方超时 —— 重传丢失分组",
+    desc: "发送方 B 迟迟收不到 B3 的确认，超时后重传（↻）。重传分组要再次占用输入链路、再次排队，才有机会到达接收方。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.6),
+        P("B3r", "rtx", "host-b", "router", 0.4, { label: "B3′", retrans: true, fields: { "类型": "重传分组", "原分组": "B3" } })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["lb"],
+      buffers: { router: 5 },
+      metrics: { ideal: "R/2", actual: "下降中", idealPct: 50, actualPct: 38, note: "重传开始消耗额外带宽。" },
+      focus: { type: "packet", id: "B3r" }
+    }
+  },
+  {
+    title: "第 6 步：重传浪费带宽 —— 恶性循环",
+    desc: "重传分组与新分组争抢有限的缓存与链路；若重传再次被丢弃，还需再次重传。丢包→重传→更拥塞→更多丢包，形成正反馈恶化。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.5),
+        P("A2", "A", "router", "receiver", 0.15),
+        P("B3r", "rtx", "router", "receiver", 0.35, { label: "B3′", retrans: true }),
+        P("B4", "rtx", "host-b", "router", 1.0, { label: "B4", dropped: true, fields: { "命运": "再次被丢弃" } })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "DROPPING", "receiver": "RECEIVING" },
+      activeLinks: ["la", "lb", "lout"],
+      buffers: { router: 6 },
+      metrics: { ideal: "R/2", actual: "明显下降", idealPct: 50, actualPct: 30, note: "带宽同时被重传与丢包侵蚀。" },
+      focus: { type: "packet", id: "B4" }
+    }
+  },
+  {
+    title: "第 7 步：吞吐量受限 —— 低于理想值",
+    desc: "由于丢包与重传，真正到达接收方的新数据减少，实际吞吐量不仅达不到理想值，在高负载时还可能随 λin 增大而下降。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.7),
+        P("B3r", "rtx", "router", "receiver", 0.5, { label: "B3′", retrans: true })
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["lout"],
+      buffers: { router: 5 },
+      metrics: { ideal: "R/2", actual: "明显 < R/2", idealPct: 50, actualPct: 28, note: "高负载下实际吞吐不升反降。" },
+      focus: { type: "metrics" }
+    }
+  },
+  {
+    title: "第 8 步：结论 —— 有限缓存放大拥塞",
+    desc: "有限缓存带来丢包；超时重传又额外消耗带宽，且被丢分组此前的传输与排队全部浪费。这正是拥塞控制必须限制发送速率的原因。下一步请看场景 3：多跳网络如何让浪费层层叠加。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router", "receiver", 0.5)
+      ],
+      nodeStates: { "host-a": "SENDING", "host-b": "SENDING", "router": "CONGESTED", "receiver": "RECEIVING" },
+      activeLinks: ["lout"],
+      buffers: { router: 4 },
+      metrics: { ideal: "R/2", actual: "明显 < R/2", idealPct: 50, actualPct: 28, note: "丢包 + 重传 = 双重浪费。" },
+      focus: { type: "node", id: "router" }
+    }
+  }
+];
+
+/* ---------- 场景 3：四个发送方 + 多台有限缓存路由器 + 多跳路径 ---------- */
+const SC3_NODES = [
+  { id: "host-a",      type: "host",     label: "发送方 A", x: 80,  y: 90,  bufferCap: 0 },
+  { id: "host-b",      type: "host",     label: "发送方 B", x: 80,  y: 210, bufferCap: 0 },
+  { id: "router-1",    type: "router",   label: "路由1",    x: 250, y: 150, bufferCap: 4 },
+  { id: "host-c",      type: "host",     label: "发送方 C", x: 80,  y: 330, bufferCap: 0 },
+  { id: "host-d",      type: "host",     label: "发送方 D", x: 80,  y: 450, bufferCap: 0 },
+  { id: "router-2",    type: "router",   label: "路由2",    x: 250, y: 390, bufferCap: 4 },
+  { id: "router-core", type: "router",   label: "核心",     x: 470, y: 270, bufferCap: 4 },
+  { id: "receiver",    type: "receiver", label: "接收方",   x: 710, y: 270, bufferCap: 0 }
+];
+const SC3_LINKS = [
+  { id: "la1", from: "host-a",      to: "router-1",    rate: "R" },
+  { id: "lb1", from: "host-b",      to: "router-1",    rate: "R" },
+  { id: "lc2", from: "host-c",      to: "router-2",    rate: "R" },
+  { id: "ld2", from: "host-d",      to: "router-2",    rate: "R" },
+  { id: "l1c", from: "router-1",    to: "router-core", rate: "R" },
+  { id: "l2c", from: "router-2",    to: "router-core", rate: "R" },
+  { id: "lco", from: "router-core", to: "receiver",    rate: "R" }
+];
+const SC3_STEPS = [
+  {
+    title: "第 1 步：认识拓扑 —— 多跳 + 有限缓存",
+    desc: "四个发送方分两组接入路由 1 / 路由 2，汇聚到核心路由器，再经一条链路到达接收方。所有链路速率均为 R，每台路由器缓存有限（简化演示：容量 4）。",
+    snapshot: {
+      packets: [],
+      nodeStates: {
+        "host-a": "IDLE", "host-b": "IDLE", "host-c": "IDLE", "host-d": "IDLE",
+        "router-1": "IDLE", "router-2": "IDLE", "router-core": "IDLE", "receiver": "IDLE"
+      },
+      activeLinks: [],
+      buffers: { "router-1": 0, "router-2": 0, "router-core": 0 },
+      metrics: null,
+      focus: { type: "node", id: "router-core" }
+    }
+  },
+  {
+    title: "第 2 步：低负载 —— 分组顺利穿越多跳",
+    desc: "λin 较小时，分组 A1 沿 host-a → 路由1 → 核心 → 接收方 逐跳转发，各队列都很短，吞吐约等于输入速率。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "host-a", "router-1", 0.5),
+        P("C1", "C", "host-c", "router-2", 0.5)
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "IDLE", "host-c": "SENDING", "host-d": "IDLE",
+        "router-1": "FORWARDING", "router-2": "FORWARDING", "router-core": "IDLE", "receiver": "IDLE"
+      },
+      activeLinks: ["la1", "lc2"],
+      buffers: { "router-1": 0, "router-2": 0, "router-core": 0 },
+      metrics: { ideal: "λin", actual: "≈ λin", idealPct: 18, actualPct: 18, note: "多跳路径畅通。" },
+      focus: { type: "packet", id: "A1" }
+    }
+  },
+  {
+    title: "第 3 步：逐跳转发 —— 分组在路径上推进",
+    desc: "A1 已由路由 1 转发到通往核心的链路上；C1 到达路由 2。每一跳都消耗一段链路带宽。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-1", "router-core", 0.5),
+        P("C1", "C", "host-c", "router-2", 1.0),
+        P("B1", "B", "host-b", "router-1", 0.5)
+      ],
+      nodeStates: {
+        "host-a": "IDLE", "host-b": "SENDING", "host-c": "SENDING", "host-d": "IDLE",
+        "router-1": "FORWARDING", "router-2": "FORWARDING", "router-core": "FORWARDING", "receiver": "IDLE"
+      },
+      activeLinks: ["l1c", "lb1"],
+      buffers: { "router-1": 0, "router-2": 1, "router-core": 0 },
+      metrics: { ideal: "λin", actual: "≈ λin", idealPct: 22, actualPct: 22, note: "每个分组已累计占用多段带宽。" },
+      focus: { type: "packet", id: "A1" }
+    }
+  },
+  {
+    title: "第 4 步：负载增大 —— 汇聚点开始拥塞",
+    desc: "四个发送方同时加大发送量。两路流量在核心路由器汇聚，其输入队列快速增长，逼近容量上限。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-1", "router-core", 0.9),
+        P("B1", "B", "router-1", "router-core", 0.4),
+        P("C1", "C", "router-2", "router-core", 0.7),
+        P("D1", "D", "router-2", "router-core", 0.3),
+        P("A2", "A", "host-a", "router-1", 0.6)
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "CONGESTED", "router-2": "CONGESTED", "router-core": "CONGESTED", "receiver": "RECEIVING"
+      },
+      activeLinks: ["la1", "lb1", "lc2", "ld2", "l1c", "l2c"],
+      buffers: { "router-1": 2, "router-2": 2, "router-core": 3 },
+      metrics: { ideal: "R/2", actual: "接近 R/2", idealPct: 50, actualPct: 46, note: "汇聚链路成为瓶颈。" },
+      focus: { type: "node", id: "router-core" }
+    }
+  },
+  {
+    title: "第 5 步：中间跳丢包 —— 核心缓存已满",
+    desc: "核心路由器缓存满（4/4）。分组 D1 抵达时被丢弃（红色 ✕）。注意：D1 已经走完了 host-d → 路由2 这一段。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-core", "receiver", 0.4),
+        P("C1", "C", "router-2", "router-core", 0.9),
+        P("D1", "rtx", "router-2", "router-core", 1.0, { label: "D1", dropped: true, fields: { "命运": "核心缓存满，被丢弃" } })
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "CONGESTED", "router-2": "CONGESTED", "router-core": "DROPPING", "receiver": "RECEIVING"
+      },
+      activeLinks: ["l2c"],
+      buffers: { "router-1": 1, "router-2": 2, "router-core": 4 },
+      metrics: { ideal: "R/2", actual: "开始下降", idealPct: 50, actualPct: 40, note: "多跳场景首次丢包。" },
+      focus: { type: "packet", id: "D1" }
+    }
+  },
+  {
+    title: "第 6 步：上游带宽浪费 —— 丢包的连锁代价",
+    desc: "被丢弃的 D1 此前已占用 host-d → 路由2 的带宽并被转发到这里——这些传输努力因一次丢包全部作废。在多跳网络中，越靠近接收端丢包，浪费的上游资源越多。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-core", "receiver", 0.8),
+        P("C1", "C", "router-core", "receiver", 0.3)
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "CONGESTED", "router-2": "CONGESTED", "router-core": "CONGESTED", "receiver": "RECEIVING"
+      },
+      activeLinks: ["ld2", "l2c", "lco"],
+      buffers: { "router-1": 1, "router-2": 1, "router-core": 3 },
+      metrics: { ideal: "R/2", actual: "持续下降", idealPct: 50, actualPct: 33, note: "高亮链路：已被浪费的带宽。" },
+      focus: { type: "link", id: "l2c" }
+    }
+  },
+  {
+    title: "第 7 步：重传循环 —— 拥塞进一步加剧",
+    desc: "发送方 D 超时后重传 D1（↻），但网络依旧拥塞，重传分组很可能再次排队、再次被丢弃。新数据与重传数据互相挤占，形势恶化。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-core", "receiver", 0.6),
+        P("D1r", "rtx", "host-d", "router-2", 0.5, { label: "D1′", retrans: true, fields: { "类型": "重传分组", "原分组": "D1" } }),
+        P("D2", "rtx", "router-2", "router-core", 1.0, { label: "D2", dropped: true, fields: { "命运": "再次被丢弃" } })
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "CONGESTED", "router-2": "DROPPING", "router-core": "CONGESTED", "receiver": "RECEIVING"
+      },
+      activeLinks: ["ld2", "l2c"],
+      buffers: { "router-1": 2, "router-2": 3, "router-core": 4 },
+      metrics: { ideal: "R/2", actual: "大幅下降", idealPct: 50, actualPct: 22, note: "重传与新数据互相挤占。" },
+      focus: { type: "packet", id: "D1r" }
+    }
+  },
+  {
+    title: "第 8 步：有效吞吐趋于零 —— 拥塞崩溃",
+    desc: "当输入速率足够大，分组不断在中途被丢弃、不断重传，真正到达接收方的新数据越来越少——有效吞吐量可趋近于零（简化演示：以极低数值示意）。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-1", "router-core", 0.4),
+        P("D1r", "rtx", "router-2", "router-core", 0.5, { label: "D1′", retrans: true }),
+        P("B2", "rtx", "host-b", "router-1", 1.0, { label: "B2", dropped: true, fields: { "命运": "被丢弃" } })
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "DROPPING", "router-2": "DROPPING", "router-core": "CONGESTED", "receiver": "IDLE"
+      },
+      activeLinks: ["la1", "lb1", "lc2", "ld2", "l1c", "l2c"],
+      buffers: { "router-1": 4, "router-2": 4, "router-core": 4 },
+      metrics: { ideal: "R/2", actual: "→ 0", idealPct: 50, actualPct: 5, note: "拥塞崩溃：忙而无效。" },
+      focus: { type: "metrics" }
+    }
+  },
+  {
+    title: "第 9 步：结论 —— 为什么必须有拥塞控制",
+    desc: "多跳网络中，任意一跳的丢包都会作废该分组此前消耗的所有上游带宽；重传又反过来加剧拥塞。若不限制发送速率，整个网络的有效吞吐可能崩溃到接近零——这正是 TCP 拥塞控制存在的根本原因。",
+    snapshot: {
+      packets: [
+        P("A1", "A", "router-1", "router-core", 0.3)
+      ],
+      nodeStates: {
+        "host-a": "SENDING", "host-b": "SENDING", "host-c": "SENDING", "host-d": "SENDING",
+        "router-1": "CONGESTED", "router-2": "CONGESTED", "router-core": "CONGESTED", "receiver": "IDLE"
+      },
+      activeLinks: ["l1c"],
+      buffers: { "router-1": 3, "router-2": 3, "router-core": 3 },
+      metrics: { ideal: "R/2", actual: "→ 0", idealPct: 50, actualPct: 5, note: "拥塞控制 = 保护网络整体效率。" },
+      focus: { type: "node", id: "router-core" }
+    }
+  }
+];
+
+const SCENARIOS = {
+  scenario1: { title: "场景 1 · 无穷缓存", nodes: SC1_NODES, links: SC1_LINKS, steps: SC1_STEPS },
+  scenario2: { title: "场景 2 · 有限缓存", nodes: SC2_NODES, links: SC1_LINKS, steps: SC2_STEPS },
+  scenario3: { title: "场景 3 · 多跳网络", nodes: SC3_NODES, links: SC3_LINKS, steps: SC3_STEPS }
+};
+
+/* ============================================================
+   5. JS 全局状态与 DOM 引用
+   ============================================================ */
+const state = {
+  scenarioKey: "scenario1",
+  currentIndex: 0,
+  playing: false,
+  playTimer: null,
+  speed: 1,
+  durationMs: BASE_DURATION,
+  resetting: false,
+  manualFocus: null        // 用户点击数据包后的临时焦点
+};
+
+let nodeMap = new Map();          // nodeId -> node 配置
+let nodeEls = new Map();          // nodeId -> <g>
+let linkEls = new Map();          // linkId -> <line>
+let bufferUi = new Map();         // nodeId -> 缓存区 UI 引用
+let packetEls = new Map();        // packetId -> <g.packet>
+
+const dom = {};
+function cacheDom() {
+  dom.svg = document.getElementById("topology");
+  dom.btnPrev = document.getElementById("btnPrev");
+  dom.btnPlay = document.getElementById("btnPlay");
+  dom.btnNext = document.getElementById("btnNext");
+  dom.btnReset = document.getElementById("btnReset");
+  dom.speedRange = document.getElementById("speedRange");
+  dom.speedVal = document.getElementById("speedVal");
+  dom.themeBtn = document.getElementById("themeBtn");
+  dom.tabs = document.getElementById("tabs");
+  dom.stepTitle = document.getElementById("stepTitle");
+  dom.stepDesc = document.getElementById("stepDesc");
+  dom.stepCount = document.getElementById("stepCount");
+  dom.progressFill = document.getElementById("progressFill");
+  dom.focusBox = document.getElementById("focusBox");
+  dom.idealBar = document.getElementById("idealBar");
+  dom.actualBar = document.getElementById("actualBar");
+  dom.idealVal = document.getElementById("idealVal");
+  dom.actualVal = document.getElementById("actualVal");
+  dom.metricNote = document.getElementById("metricNote");
+}
+
+/* ============================================================
+   6. JS 主题管理
+   ============================================================ */
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* 隐私模式下忽略 */ }
+}
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
+  if (saved === "dark" || saved === "light") { applyTheme(saved); return; }
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(prefersDark ? "dark" : "light");
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme") || "light";
+  applyTheme(cur === "dark" ? "light" : "dark");
+}
+
+/* ============================================================
+   7. JS 核心渲染层（renderState，幂等）
+   ============================================================ */
+function cfg() { return SCENARIOS[state.scenarioKey]; }
+function currentSteps() { return cfg().steps; }
+function lastIndex() { return currentSteps().length - 1; }
+function currentSnapshot() { return currentSteps()[state.currentIndex].snapshot; }
+function getNode(id) { return nodeMap.get(id); }
+
+function positionPacket(el, p, progress) {
+  const a = getNode(p.from), b = getNode(p.to);
+  if (!a || !b) return;
+  const x = a.x + (b.x - a.x) * progress;
+  const y = a.y + (b.y - a.y) * progress;
+  el.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+function createPacketElement(p) {
+  const g = createSvg("g", {
+    class: "packet owner-" + p.owner + (p.retrans ? " retrans" : "") + (p.dropped ? " dropped" : "")
+  });
+  g.dataset.pid = p.id;
+
+  const rect = createSvg("rect", { x: -18, y: -13, width: 36, height: 26, rx: 6 });
+  const text = createSvg("text", { y: 4, "text-anchor": "middle" });
+  text.textContent = p.label;
+  g.append(rect, text);
+
+  if (p.retrans) {
+    const m = createSvg("text", { y: -18, "text-anchor": "middle", class: "mark" });
+    m.textContent = "↻ 重传";
+    g.appendChild(m);
+  }
+  if (p.dropped) {
+    const m = createSvg("text", { y: -18, "text-anchor": "middle", class: "mark" });
+    m.textContent = "✕ 丢失";
+    g.appendChild(m);
+  }
+
+  g.addEventListener("click", () => {
+    state.manualFocus = { type: "packet", id: p.id };
+    applyCurrentFocus(currentSnapshot());
+    renderFocusBox();
+  });
+  return g;
+}
+
+function syncPackets(packets, animate) {
+  const present = new Set(packets.map(p => p.id));
+  const layer = dom.svg.querySelector("#layer-packets");
+
+  /* 移除快照中已不存在的数据包（安全淡出） */
+  for (const [id, el] of Array.from(packetEls.entries())) {
+    if (!present.has(id)) {
+      packetEls.delete(id);
+      el.classList.add("packet-leave");
+      setTimeout(() => { if (el.isConnected) el.remove(); }, 260);
+    }
+  }
+
+  /* 新增 / 更新数据包 */
+  for (const p of packets) {
+    let el = packetEls.get(p.id);
+    const isNew = !el;
+
+    if (isNew) {
+      el = createPacketElement(p);
+      layer.appendChild(el);
+      packetEls.set(p.id, el);
+
+      if (animate) {
+        /* 新分组：先无过渡放到起点，再过渡到目标进度 */
+        el.classList.add("no-transition");
+        positionPacket(el, p, 0);
+        forceReflow(el);
+        el.classList.remove("no-transition");
+      } else {
+        el.classList.add("no-transition");
+        positionPacket(el, p, p.progress);
+        forceReflow(el);
+        el.classList.remove("no-transition");
+      }
+    }
+
+    /* 更新类与标签，保证幂等 */
+    el.setAttribute("class",
+      "packet owner-" + p.owner +
+      (p.retrans ? " retrans" : "") +
+      (p.dropped ? " dropped" : "")
+    );
+    const textEl = el.querySelector("text:not(.mark)");
+    if (textEl) textEl.textContent = p.label;
+
+    positionPacket(el, p, p.progress);
+  }
+}
+
+function applyNodeStates(nodeStates) {
+  for (const n of cfg().nodes) {
+    const el = nodeEls.get(n.id);
+    if (!el) continue;
+    const st = (nodeStates && nodeStates[n.id]) || "IDLE";
+    el.classList.remove("sending", "forwarding", "congested", "dropping", "receiving");
+    el.classList.add(st.toLowerCase());
+  }
+}
+
+function applyActiveLinks(activeLinks) {
+  for (const l of cfg().links) {
+    const el = linkEls.get(l.id);
+    if (!el) continue;
+    el.classList.toggle("active", !!(activeLinks && activeLinks.includes(l.id)));
+  }
+}
+
+/* 展示缓存区空间变化：
+   - 有限缓存：逐个缓存格点亮 / 熄灭；
+   - 无穷缓存：用示意条展示排队长度变化。 */
+function applyBuffers(buffers) {
+  for (const [nodeId, ui] of bufferUi) {
+    const raw = buffers ? buffers[nodeId] : 0;
+
+    let count = 0;
+    if (Array.isArray(raw)) {
+      count = raw.length;
+    } else {
+      const num = Number(raw);
+      count = Number.isFinite(num) ? num : 0;
+    }
+
+    if (ui.type === "finite") {
+      const cap = ui.cap;
+      const filled = Math.min(count, cap);
+      const ratio = cap > 0 ? count / cap : 0;
+
+      ui.slots.forEach((slot, i) => {
+        const on = i < filled;
+        slot.classList.toggle("on", on);
+        slot.classList.toggle("warn", on && ratio >= 0.7 && ratio < 1);
+        slot.classList.toggle("full", on && ratio >= 1);
+      });
+
+      ui.countText.textContent = `${count}/${cap}`;
+      if (ui.group) ui.group.classList.toggle("buffer-full", ratio >= 1);
+    } else if (ui.type === "infinite") {
+      /* 无穷缓存没有固定容量，这里用 0~8 的示意尺度展示排队长度变化 */
+      const scale = 8;
+      const width = 100 * Math.min(1, count / scale);
+      ui.fill.setAttribute("width", width.toFixed(1));
+      ui.fill.classList.toggle("warn", count >= Math.floor(scale * 0.7));
+      ui.countText.textContent = `${count} / ∞`;
+    }
+  }
+}
+
+function clearFocus() {
+  nodeEls.forEach(el => el.classList.remove("focused"));
+  packetEls.forEach(el => el.classList.remove("focused"));
+  linkEls.forEach(el => el.classList.remove("focused"));
+}
+
+function applyCurrentFocus(snapshot) {
+  clearFocus();
+  const focus = state.manualFocus || (snapshot && snapshot.focus);
+  if (!focus) return;
+
+  if (focus.type === "node") {
+    const el = nodeEls.get(focus.id);
+    if (el) el.classList.add("focused");
+  } else if (focus.type === "packet") {
+    const el = packetEls.get(focus.id);
+    if (el) el.classList.add("focused");
+  } else if (focus.type === "link") {
+    const el = linkEls.get(focus.id);
+    if (el) el.classList.add("focused");
+  }
+}
+
+/* 渲染层唯一入口：给定快照立即重绘到位（幂等） */
+function renderState(snapshot, animate) {
+  if (!snapshot) return;
+  if (!animate) dom.svg.classList.add("no-anim");
+
+  applyNodeStates(snapshot.nodeStates);
+  applyActiveLinks(snapshot.activeLinks);
+  applyBuffers(snapshot.buffers);
+  syncPackets(snapshot.packets || [], animate);
+  applyCurrentFocus(snapshot);
+
+  if (!animate) {
+    forceReflow(dom.svg);
+    dom.svg.classList.remove("no-anim");
+  }
+}
+
+/* ============================================================
+   信息面板（焦点详情 + 吞吐量）
+   ============================================================ */
+function rowHtml(k, v) {
+  return `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+}
+function findPacketInSnapshot(id) {
+  const snap = currentSnapshot();
+  return (snap.packets || []).find(p => p.id === id) || null;
+}
+
+function renderFocusBox() {
+  const snap = currentSnapshot();
+  const focus = state.manualFocus || (snap && snap.focus) || null;
+  let html = "";
+
+  if (!focus) {
+    html = rowHtml("提示", "当前步骤无焦点对象");
+  } else if (focus.type === "node") {
+    const n = getNode(focus.id);
+    if (!n) {
+      html = rowHtml("提示", "节点不存在");
+    } else {
+      const st = (snap.nodeStates && snap.nodeStates[focus.id]) || "IDLE";
+      const capTxt = n.bufferCap === Infinity ? "∞（无穷大）" : (n.bufferCap > 0 ? n.bufferCap + " 个分组" : "—");
+      const rawOcc = snap.buffers ? snap.buffers[focus.id] : null;
+      let occ = "—";
+      if (rawOcc != null) {
+        if (Array.isArray(rawOcc)) occ = rawOcc.length + " 个";
+        else occ = rawOcc + " 个";
+      }
+
+      html += rowHtml("对象类型", "节点");
+      html += rowHtml("名称", n.label);
+      html += rowHtml("角色", n.type === "host" ? "发送方" : n.type === "router" ? "路由器" : "接收方");
+      html += rowHtml("当前状态", st);
+      if (n.type === "router") {
+        html += rowHtml("缓存容量", capTxt);
+        html += rowHtml("当前占用", occ);
+      }
+    }
+  } else if (focus.type === "packet") {
+    const p = findPacketInSnapshot(focus.id);
+    if (!p) {
+      html = rowHtml("提示", "该分组不在当前步骤中");
+    } else {
+      const fromN = getNode(p.from), toN = getNode(p.to);
+      html += rowHtml("对象类型", "数据分组");
+      html += rowHtml("标识", p.label);
+      html += rowHtml("所属发送方", p.owner === "rtx" ? "（重传）" : p.owner);
+      html += rowHtml("当前链路", (fromN ? fromN.label : p.from) + " → " + (toN ? toN.label : p.to));
+      html += rowHtml("链路进度", Math.round(p.progress * 100) + "%");
+      html += rowHtml("传输类型", p.dropped ? "已被丢弃" : p.retrans ? "重传分组" : "首次传输");
+      for (const k in p.fields) html += rowHtml(k, p.fields[k]);
+    }
+  } else if (focus.type === "link") {
+    const l = cfg().links.find(x => x.id === focus.id);
+    if (!l) {
+      html = rowHtml("提示", "链路不存在");
+    } else {
+      const a = getNode(l.from), b = getNode(l.to);
+      const active = snap.activeLinks && snap.activeLinks.includes(l.id);
+      html += rowHtml("对象类型", "链路");
+      html += rowHtml("路径", (a ? a.label : l.from) + " → " + (b ? b.label : l.to));
+      html += rowHtml("速率", l.rate);
+      html += rowHtml("是否活跃", active ? "是（正在传输）" : "否");
+    }
+  } else if (focus.type === "metrics") {
+    html += rowHtml("对象类型", "吞吐量指标");
+    html += rowHtml("说明", "对比理想与实际吞吐");
+    if (snap.metrics) {
+      html += rowHtml("理想吞吐", snap.metrics.ideal);
+      html += rowHtml("实际吞吐", snap.metrics.actual);
+    }
+  }
+
+  dom.focusBox.innerHTML = html;
+}
+
+function renderMetrics() {
+  const m = currentSnapshot().metrics;
+  if (!m) {
+    dom.idealBar.style.width = "0%";
+    dom.actualBar.style.width = "0%";
+    dom.idealVal.textContent = "—";
+    dom.actualVal.textContent = "—";
+    dom.metricNote.textContent = "本步骤无吞吐量数据。";
+    return;
+  }
+  dom.idealBar.style.width = clamp(m.idealPct, 0, 100) + "%";
+  dom.actualBar.style.width = clamp(m.actualPct, 0, 100) + "%";
+  dom.idealVal.textContent = m.ideal;
+  dom.actualVal.textContent = m.actual;
+  dom.metricNote.textContent = m.note || "吞吐量数值为教学示意，非真实测量值。";
+}
+
+function renderStepInfo() {
+  const steps = currentSteps();
+  const s = steps[state.currentIndex];
+  dom.stepTitle.textContent = s.title;
+  dom.stepDesc.textContent = s.desc;
+  dom.stepCount.textContent = `第 ${state.currentIndex + 1} / ${steps.length} 步`;
+  const pct = steps.length > 1 ? (state.currentIndex / (steps.length - 1)) * 100 : 100;
+  dom.progressFill.style.width = pct + "%";
+}
+
+/* ============================================================
+   8. JS 状态机与控制层（goToStep 为唯一切换入口）
+   ============================================================ */
+function goToStep(index, options = {}) {
+  /* 重置过程中忽略外部单步请求 */
+  if (state.resetting && options.source !== "reset") return;
+
+  const steps = currentSteps();
+  index = clamp(index, 0, steps.length - 1);
+
+  const prev = state.currentIndex;
+  state.currentIndex = index;
+  const goingForward = index > prev;
+
+  /* 前进可动画；回退 / 重置一律瞬间落位 */
+  let animate = options.animate;
+  if (!goingForward) animate = false;
+  if (animate === undefined) animate = goingForward;
+
+  state.manualFocus = null; // 步骤变化时清除手动焦点
+  renderState(steps[index].snapshot, animate);
+  renderStepInfo();
+  renderFocusBox();
+  renderMetrics();
+  updateControls();
+}
+
+function updateControls() {
+  dom.btnPrev.disabled = state.currentIndex <= 0;
+  dom.btnNext.disabled = state.currentIndex >= lastIndex();
+  dom.btnPlay.innerHTML = state.playing
+    ? "<kbd>空格</kbd> ⏸ 暂停"
+    : "<kbd>空格</kbd> ▶ 播放";
+}
+
+/* ---------- 控制包装函数（状态切换最终都经由 goToStep） ---------- */
+function nextStep() { goToStep(state.currentIndex + 1, { animate: true }); }
+function prevStep() { goToStep(state.currentIndex - 1, { animate: false }); }
+function resetDemo() {
+  state.resetting = true;
+  stopPlaying();
+  goToStep(0, { animate: false, source: "reset" });
+  setTimeout(() => { state.resetting = false; }, 60);
+}
+
+/* ---------- 播放 / 暂停 ---------- */
+function getPlayInterval() { return state.durationMs + PLAY_GAP; }
+function scheduleNext() {
+  clearTimeout(state.playTimer);
+  if (!state.playing) return;
+  state.playTimer = setTimeout(() => {
+    if (!state.playing) return;
+    if (state.currentIndex >= lastIndex()) {
+      stopPlaying();
+      updateControls();
+      return;
+    }
+    goToStep(state.currentIndex + 1, { animate: true });
+    scheduleNext();
+  }, getPlayInterval());
+}
+function startPlaying() {
+  if (state.playing) return;
+  if (state.currentIndex >= lastIndex()) {
+    goToStep(0, { animate: false }); // 播完再按播放 => 从头开始
+  }
+  state.playing = true;
+  updateControls();
+  scheduleNext();
+}
+function stopPlaying() {
+  state.playing = false;
+  clearTimeout(state.playTimer);
+}
+/* pause：立即落位到当前步骤终态 */
+function pause() {
+  stopPlaying();
+  renderState(currentSnapshot(), false);
+  updateControls();
+}
+function togglePlay() {
+  if (state.playing) pause();
+  else startPlaying();
+}
+
+/* ---------- 场景切换 ---------- */
+function loadScenario(key) {
+  if (!SCENARIOS[key]) return;
+  stopPlaying();
+  state.scenarioKey = key;
+  state.currentIndex = 0;
+  state.manualFocus = null;
+  buildTopology();
+  goToStep(0, { animate: false, source: "scenario" });
+  updateTabs();
+}
+function updateTabs() {
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.scenario === state.scenarioKey);
+  });
+}
+
+/* ============================================================
+   拓扑构建（场景切换时重建）
+   ============================================================ */
+function buildBufferUi(g, n) {
+  if (n.bufferCap === Infinity) {
+    const title = createSvg("text", { y: 52, "text-anchor": "middle", class: "buffer-title" });
+    title.textContent = "缓存区（无穷）";
+
+    const bg = createSvg("rect", { x: -50, y: 58, width: 100, height: 9, rx: 4, class: "buffer-bg" });
+    const fill = createSvg("rect", { x: -50, y: 58, width: 0, height: 9, rx: 4, class: "buffer-fill" });
+
+    const count = createSvg("text", { y: 82, "text-anchor": "middle", class: "buffer-count" });
+    count.textContent = "0 / ∞";
+
+    g.append(title, bg, fill, count);
+    bufferUi.set(n.id, { type: "infinite", fill, countText: count });
+    return;
+  }
+
+  if (n.bufferCap > 0) {
+    const cap = n.bufferCap;
+    const title = createSvg("text", { y: 52, "text-anchor": "middle", class: "buffer-title" });
+    title.textContent = `缓存区（${cap}格）`;
+    g.appendChild(title);
+
+    const slotW = 14;
+    const gap = 4;
+    const total = cap * slotW + (cap - 1) * gap;
+    const startX = -total / 2;
+    const y = 58;
+    const slots = [];
+
+    for (let i = 0; i < cap; i++) {
+      const x = startX + i * (slotW + gap);
+      const bg = createSvg("rect", { x, y, width: slotW, height: slotW, rx: 3, class: "buffer-slot-bg" });
+      const fill = createSvg("rect", { x, y, width: slotW, height: slotW, rx: 3, class: "buffer-slot-fill" });
+      g.append(bg, fill);
+      slots.push(fill);
+    }
+
+    const count = createSvg("text", { y: y + slotW + 15, "text-anchor": "middle", class: "buffer-count" });
+    count.textContent = `0/${cap}`;
+    g.appendChild(count);
+
+    bufferUi.set(n.id, { type: "finite", cap, slots, countText: count, group: g });
+  }
+}
+
+function buildTopology() {
+  const svg = dom.svg;
+  svg.innerHTML = "";
+  packetEls.clear();
+  nodeEls.clear();
+  linkEls.clear();
+  bufferUi.clear();
+  nodeMap.clear();
+
+  cfg().nodes.forEach(n => nodeMap.set(n.id, n));
+
+  const layerLinks = createSvg("g", { id: "layer-links" });
+  const layerNodes = createSvg("g", { id: "layer-nodes" });
+  const layerPackets = createSvg("g", { id: "layer-packets" });
+  svg.append(layerLinks, layerNodes, layerPackets);
+
+  /* 链路 */
+  for (const l of cfg().links) {
+    const a = getNode(l.from), b = getNode(l.to);
+    const line = createSvg("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: "link" });
+    layerLinks.appendChild(line);
+    linkEls.set(l.id, line);
+
+    if (l.rate) {
+      const t = createSvg("text", {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2 - 8,
+        "text-anchor": "middle",
+        class: "link-label"
+      });
+      t.textContent = l.rate;
+      layerLinks.appendChild(t);
+    }
+  }
+
+  /* 节点 */
+  for (const n of cfg().nodes) {
+    const g = createSvg("g", { class: "node type-" + n.type, transform: `translate(${n.x},${n.y})` });
+    g.dataset.id = n.id;
+
+    let body;
+    if (n.type === "router") body = createSvg("circle", { r: 30, class: "body" });
+    else body = createSvg("rect", { x: -42, y: -24, width: 84, height: 48, rx: 9, class: "body" });
+    g.appendChild(body);
+
+    const label = createSvg("text", { y: 4, "text-anchor": "middle", class: "node-label" });
+    label.textContent = n.label;
+    g.appendChild(label);
+
+    if (n.type === "router") {
+      buildBufferUi(g, n);
+    }
+
+    layerNodes.appendChild(g);
+    nodeEls.set(n.id, g);
+  }
+}
+
+/* ============================================================
+   9. JS 交互绑定与快捷键逻辑
+   ============================================================ */
+function flashButton(btn) {
+  if (!btn) return;
+  btn.classList.add("btn-flash");
+  setTimeout(() => btn.classList.remove("btn-flash"), 200);
+}
+
+function isEditableTarget(t) {
+  if (!t) return false;
+  const tag = (t.tagName || "").toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
+}
+
+function bindEvents() {
+  dom.btnPrev.addEventListener("click", () => prevStep());
+  dom.btnNext.addEventListener("click", () => nextStep());
+  dom.btnPlay.addEventListener("click", () => togglePlay());
+  dom.btnReset.addEventListener("click", () => resetDemo());
+  dom.themeBtn.addEventListener("click", () => toggleTheme());
+
+  dom.speedRange.addEventListener("input", () => {
+    state.speed = parseFloat(dom.speedRange.value);
+    state.durationMs = Math.round(BASE_DURATION / state.speed);
+    document.documentElement.style.setProperty("--anim-duration", state.durationMs + "ms");
+    dom.speedVal.textContent = state.speed + "×";
+    if (state.playing) scheduleNext(); // 用新速度重新计时
+  });
+
+  dom.tabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    loadScenario(btn.dataset.scenario);
+  });
+
+  /* 快捷键 */
+  document.addEventListener("keydown", (e) => {
+    /* 焦点在可编辑控件时快捷键失效 */
+    if (isEditableTarget(e.target)) return;
+    /* 页面不在前台不响应 */
+    if (document.hidden) return;
+    /* 重置过程中忽略单步请求 */
+    if (state.resetting && e.key !== "r" && e.key !== "R") return;
+
+    switch (e.key) {
+      case " ":
+        e.preventDefault();
+        togglePlay();
+        flashButton(dom.btnPlay);
+        break;
+      case "s":
+      case "S":
+      case "ArrowRight":
+        e.preventDefault();
+        nextStep();
+        flashButton(dom.btnNext);
+        break;
+      case "a":
+      case "A":
+      case "ArrowLeft":
+        e.preventDefault();
+        prevStep();
+        flashButton(dom.btnPrev);
+        break;
+      case "r":
+      case "R":
+        e.preventDefault();
+        resetDemo();
+        flashButton(dom.btnReset);
+        break;
+      case "t":
+      case "T":
+        e.preventDefault();
+        toggleTheme();
+        flashButton(dom.themeBtn);
+        break;
+    }
+  });
+}
+
+/* ============================================================
+   10. JS 初始化
+   ============================================================ */
+function init() {
+  cacheDom();
+  initTheme();
+  document.documentElement.style.setProperty("--anim-duration", state.durationMs + "ms");
+  bindEvents();
+  loadScenario("scenario1");
+}
+init();
+</script>
+</body>
+</html>
