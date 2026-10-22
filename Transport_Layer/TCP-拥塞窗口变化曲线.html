@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TCP 拥塞控制 · cwnd 曲线变化交互演示</title>
+<!-- [D10] 同步脚本：提前应用主题，消除首屏 FOUC -->
+<script>
+(function(){
+  var THEME_KEY = 'tcp-cwnd-demo-theme';
+  var t = null;
+  try { t = localStorage.getItem(THEME_KEY); } catch(e){}
+  if(!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<style>
+/* ============================================================
+   1. CSS 样式：主题变量 / 布局 / SVG 基础样式 / 过渡与反馈类
+   ============================================================ */
+:root{
+  --bg:#eef2f9; --card:#ffffff; --card-2:#f4f7fc;
+  --text:#182236; --muted:#5d6c86; --border:#d9e1ef;
+  --accent:#2f6df6; --accent-soft:rgba(47,109,246,.12);
+  --ok:#17994f; --warn:#d97706; --danger:#dc2626; --violet:#7c3aed;
+  --warn-soft:rgba(217,119,6,.10); --danger-soft:rgba(220,38,38,.08);
+  --pk-data:#2f6df6; --pk-ack:#17994f; --pk-dup:#d97706; --pk-drop:#dc2626; --pk-ret:#7c3aed;
+  --link:#b9c6dd; --link-active:#2f6df6;
+  --node-fill:#ffffff; --node-stroke:#93a5c5; --screen:#e9effc;
+  --grid:#e4eaf5; --axis:#8fa0bd;
+  --band-ss:rgba(23,153,79,.08); --band-ca:rgba(47,109,246,.07); --band-ca2:rgba(124,58,237,.07);
+  --dot-ss:#17994f; --dot-ca:#2f6df6; --dot-fr:#d97706;
+  --shadow:0 10px 28px rgba(23,42,84,.08);
+  --anim-duration:950ms;
+}
+[data-theme="dark"]{
+  --bg:#0d1420; --card:#151f30; --card-2:#1b2740;
+  --text:#e9effb; --muted:#90a4c4; --border:#283752;
+  --accent:#5b93ff; --accent-soft:rgba(91,147,255,.16);
+  --ok:#34d399; --warn:#fbbf24; --danger:#f87171; --violet:#a78bfa;
+  --warn-soft:rgba(251,191,36,.12); --danger-soft:rgba(248,113,113,.12);
+  --pk-data:#5b93ff; --pk-ack:#34d399; --pk-dup:#fbbf24; --pk-drop:#f87171; --pk-ret:#a78bfa;
+  --link:#33456a; --link-active:#5b93ff;
+  --node-fill:#1b2a42; --node-stroke:#4a608a; --screen:#233450;
+  --grid:#223049; --axis:#5f7396;
+  --band-ss:rgba(52,211,153,.09); --band-ca:rgba(91,147,255,.09); --band-ca2:rgba(167,139,250,.09);
+  --dot-ss:#34d399; --dot-ca:#5b93ff; --dot-fr:#fbbf24;
+  --shadow:0 10px 28px rgba(0,0,0,.38);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:"PingFang SC","Microsoft YaHei","Segoe UI",system-ui,-apple-system,sans-serif;
+  background:radial-gradient(1100px 520px at 85% -120px, var(--accent-soft), transparent 62%), var(--bg);
+  color:var(--text); max-width:1220px; margin:0 auto; padding:18px 20px 44px;
+  transition: background 0.35s ease, color 0.35s ease;
+}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.topbar h1{font-size:20px;margin:0 0 4px}
+.topbar h1 span{color:var(--accent)}
+.subtitle{margin:0;color:var(--muted);font-size:12.5px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 352px;gap:12px;align-items:start}
+.col-left{display:flex;flex-direction:column;gap:12px;min-width:0}
+.col-right{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (max-width:1020px){ main{grid-template-columns:1fr} }
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:12px 16px; transition: background 0.35s ease, border-color 0.35s ease;}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}
+.card-head h2{font-size:14px;margin:0;letter-spacing:.4px}
+.tag{font-size:11px;color:var(--muted);background:var(--card-2);border:1px solid var(--border);padding:3px 9px;border-radius:99px;white-space:nowrap}
+svg{width:100%;height:auto;display:block}
+svg rect, svg circle, svg path, svg line, svg text { transition: fill 0.35s ease, stroke 0.35s ease, opacity 0.35s ease; }
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 13px;border-radius:10px;
+  border:1px solid var(--border);background:var(--card-2);color:var(--text);font-size:13px;cursor:pointer;
+  transition:transform .12s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease, opacity .2s;
+  font-family:inherit}
+.btn:hover:not(:disabled){border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:focus-visible,.tick:focus-visible,#speedSel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;min-width:92px}
+.btn-icon{width:40px;height:40px;font-size:16px;border-radius:12px}
+.ctrl-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.ctrl-row .btn{flex:1 1 auto}
+.opt-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.hint{margin:10px 0 0;color:var(--muted);font-size:11.5px;line-height:2}
+kbd{background:var(--card-2);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;
+  padding:1px 6px;font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--text)}
+#speedSel{background:var(--card-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit}
+.speed-label{font-size:12.5px;color:var(--muted)}
+.kbd-flash{animation:kflash .22s ease}
+@keyframes kflash{
+  from{box-shadow:0 0 0 0 var(--accent), 0 0 0 2px var(--accent);filter:brightness(1.06)}
+  to{box-shadow:0 0 0 10px rgba(0,0,0,0), 0 0 0 2px rgba(0,0,0,0)}
+}
+.step-no{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:1px;margin-bottom:4px}
+.step-title{font-size:15.5px;margin:0 0 8px;line-height:1.5}
+.step-desc{font-size:13px;line-height:1.85;color:var(--text);margin:0 0 10px}
+.step-desc b{color:var(--accent)}
+.note-box{display:none;border-left:3px solid var(--warn);background:var(--warn-soft);
+  padding:7px 10px;border-radius:0 8px 8px 0;font-size:12px;color:var(--text);line-height:1.6;margin-bottom:10px}
+.progress-track{height:6px;background:var(--card-2);border:1px solid var(--border);border-radius:99px;overflow:hidden;margin:4px 0 10px}
+.progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--violet));border-radius:99px;transition:width .35s ease}
+.ticks{display:flex;gap:6px;flex-wrap:wrap}
+.tick{width:28px;height:28px;border-radius:9px;border:1px solid var(--border);background:var(--card-2);
+  color:var(--muted);font-size:12px;cursor:pointer;font-family:inherit;
+  transition:background .2s,color .2s,border-color .2s,opacity .2s}
+.tick:hover{border-color:var(--accent)}
+.tick.done{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.tick.current{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.focus-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.focus-badge{font-size:11px;background:var(--accent-soft);color:var(--accent);border-radius:99px;padding:3px 9px;font-weight:600}
+.focus-title{font-size:13.5px;font-weight:700;margin:0}
+.info-list{display:grid;grid-template-columns:max-content 1fr;gap:7px 14px;margin:0;font-size:12.5px;min-height: 110px;}
+.info-list dt{color:var(--muted);white-space:nowrap}
+.info-list dd{margin:0;line-height:1.6;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.lane{stroke:var(--grid);stroke-width:1;stroke-dasharray:2 7}
+.lane-label{fill:var(--muted);font-size:10px}
+.link{stroke:var(--link);stroke-width:2.5;stroke-linecap:round;transition:stroke .35s ease}
+.link.active{stroke:var(--link-active);stroke-dasharray:7 7;animation:dashmove 1.1s linear infinite}
+@keyframes dashmove{to{stroke-dashoffset:-28}}
+.node .body{fill:var(--node-fill);stroke:var(--node-stroke);stroke-width:2;transition:stroke .35s ease, stroke-width .2s}
+.node .screen{fill:var(--screen);transition:fill .3s}
+.node .hardware{fill:var(--node-stroke)}
+.glyph{stroke:var(--muted);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.led{fill:var(--ok)}
+.node-label{fill:var(--text);font-size:12.5px;font-weight:600;text-anchor:middle}
+.node-status{font-size:11px;text-anchor:middle;fill:var(--muted);transition:fill .3s}
+.node[data-st="sending"] .body{stroke:var(--ok)}
+.node[data-st="sending"] .node-status{fill:var(--ok)}
+.node[data-st="fwd"] .body{stroke:var(--muted)}
+.node[data-st="ack"] .body{stroke:var(--pk-ack)}
+.node[data-st="ack"] .node-status{fill:var(--pk-ack)}
+.node[data-st="dupack"] .body{stroke:var(--pk-dup)}
+.node[data-st="dupack"] .node-status{fill:var(--pk-dup)}
+.node[data-st="congested"] .body{stroke:var(--warn)}
+.node[data-st="congested"] .node-status{fill:var(--warn)}
+.node[data-st="drop"] .body{stroke:var(--danger)}
+.node[data-st="drop"] .node-status{fill:var(--danger);font-weight:700}
+.node.focused .body{stroke-width:3.5;filter:drop-shadow(0 0 6px var(--accent))}
+.badge-main{fill:var(--accent);font-size:13.5px;font-weight:700;text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:4px}
+.badge-sub{fill:var(--muted);font-size:11px;text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:4px}
+.queue-track{fill:var(--card-2);stroke:var(--border)}
+#queueFill{fill:var(--ok);transform-box:fill-box;transform-origin:left center;
+  transition:transform var(--anim-duration) ease, fill .35s ease}
+#queueFill[data-level="mid"]{fill:var(--warn)}
+#queueFill[data-level="high"]{fill:var(--danger)}
+.queue-label{fill:var(--muted);font-size:10.5px;text-anchor:middle}
+.topo-note{fill:var(--warn);font-size:12px;font-weight:600;text-anchor:middle}
+.packet{color:var(--pk-data);transition:transform var(--anim-duration) cubic-bezier(.45,.08,.3,1), opacity .45s ease}
+.packet.no-trans{transition:none !important}
+.packet rect{fill:var(--card);stroke:currentColor;stroke-width:1.6}
+.packet text{font-size:10.5px;font-weight:700;text-anchor:middle;fill:currentColor}
+.packet .cross{stroke:var(--danger);stroke-width:2.4;stroke-linecap:round}
+.kind-data{color:var(--pk-data)}
+.kind-ack{color:var(--pk-ack)}
+.kind-dupack{color:var(--pk-dup)}
+.kind-ret{color:var(--pk-ret)}
+.kind-drop{color:var(--pk-drop)}
+.kind-drop rect{fill:var(--danger-soft);stroke-dasharray:4 3}
+.packet.dying{opacity:0}
+.packet.focused rect{stroke-width:2.6;filter:drop-shadow(0 0 7px currentColor)}
+.band{opacity:1}
+.band-ss{fill:var(--band-ss)} .band-ca{fill:var(--band-ca)} .band-ca2{fill:var(--band-ca2)}
+.band-label{fill:var(--muted);font-size:10px;text-anchor:middle}
+.grid-line{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1.5}
+.tick-line{stroke:var(--axis);stroke-width:1}
+.tick-label{fill:var(--muted);font-size:10px}
+.axis-title{fill:var(--muted);font-size:11px}
+.curve-line{fill:none;stroke:var(--text);stroke-width:2;opacity:.55;stroke-linejoin:round}
+.cdot{stroke:var(--card);stroke-width:1.5}
+.cdot-ss{fill:var(--dot-ss)} .cdot-ca{fill:var(--dot-ca)} .cdot-fr{fill:var(--dot-fr)}
+.drop-seg{stroke:var(--danger);stroke-width:2.4;stroke-dasharray:5 4;opacity:.9}
+/* ssthresh 历史痕迹样式 */
+.ssth-line { stroke: var(--warn); stroke-width: 1.8; stroke-dasharray: 7 5; }
+.ssth-line.history { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 4; opacity: 0.5; }
+.ssth-label { fill: var(--warn); font-size: 11px; font-weight: 700; text-anchor: end; }
+.ssth-label.history { fill: var(--muted); font-size: 10px; font-weight: 400; opacity: 0.7; }
+
+#curDotG{transition:transform var(--anim-duration) ease}
+.cur-dot{fill:var(--accent);stroke:var(--card);stroke-width:2}
+.cur-ring{fill:none;stroke:var(--accent);stroke-width:2;transform-box:fill-box;transform-origin:center;animation:ring 1.9s ease-out infinite}
+@keyframes ring{0%{transform:scale(.5);opacity:.9}75%{transform:scale(2.1);opacity:0}100%{transform:scale(2.1);opacity:0}}
+.cur-label{fill:var(--accent);font-size:12px;font-weight:800;paint-order:stroke;stroke:var(--card);stroke-width:4px}
+#lossG{transition:opacity .4s ease}
+#lossG.hidden{opacity:0}
+.loss-ring{fill:var(--danger-soft);stroke:var(--danger);stroke-width:2}
+.loss-x{stroke:var(--danger);stroke-width:2.6;stroke-linecap:round}
+.legend{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-left:6px}
+.dot-ss{background:var(--dot-ss)} .dot-ca{background:var(--dot-ca)} .dot-fr{background:var(--dot-fr)}
+.no-anim, .no-anim *{transition:none !important}
+footer{margin-top:16px;color:var(--muted);font-size:11.5px;line-height:1.8;border-top:1px dashed var(--border);padding-top:10px}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>TCP 拥塞控制：<span>cwnd 曲线变化</span> 交互动画</h1>
+    <p class="subtitle">慢启动 → 拥塞避免 → 3重复ACK快恢复 → 超时重传｜纯 SVG + CSS 过渡 · 状态驱动</p>
+  </div>
+  <button id="themeBtn" class="btn btn-icon" aria-label="切换深浅色主题" title="切换主题（快捷键 T）">🌙</button>
+</header>
+
+<main>
+  <section class="col-left">
+    <div class="card">
+      <div class="card-head">
+        <h2>① 网络拓扑（发送方 → 瓶颈路由器 → 接收方）</h2>
+        <span class="tag">报文在上车道向右、ACK 在下车道向左</span>
+      </div>
+      <svg id="topoSvg" viewBox="0 0 660 250" role="img" aria-label="网络拓扑动画区">
+        <line class="lane" x1="102" y1="116" x2="558" y2="116"/>
+        <line class="lane" x1="102" y1="144" x2="558" y2="144"/>
+        <text class="lane-label" x="150" y="110">数据报文 →</text>
+        <text class="lane-label" x="470" y="160">← ACK 确认</text>
+        <line id="link1" class="link" x1="100" y1="130" x2="284" y2="130"/>
+        <line id="link2" class="link" x1="376" y1="130" x2="560" y2="130"/>
+        <g id="nodeA" class="node" transform="translate(70,130)">
+          <text id="badgeSsth" class="badge-sub" y="-56"></text>
+          <text id="badgeCwnd" class="badge-main" y="-40"></text>
+          <rect class="body" x="-30" y="-30" width="60" height="40" rx="6"/>
+          <rect class="screen" x="-24" y="-24" width="48" height="24" rx="3"/>
+          <rect class="hardware" x="-4" y="10" width="8" height="6"/>
+          <rect class="hardware" x="-17" y="16" width="34" height="5" rx="2.5"/>
+          <text class="node-label" y="40">发送方 A</text>
+          <text class="node-status" y="56"></text>
+        </g>
+        <g id="router" class="node" transform="translate(330,130)">
+          <text id="queueText" class="queue-label" y="-50"></text>
+          <rect class="queue-track" x="-46" y="-42" width="92" height="9" rx="4.5"/>
+          <g transform="translate(-46,-42)">
+            <rect id="queueFill" width="92" height="9" rx="4.5" data-level="low"/>
+          </g>
+          <rect class="body" x="-46" y="-24" width="92" height="48" rx="12"/>
+          <path class="glyph" d="M-28 -8 H 20 M 13 -14 L 21 -8 L 13 -2"/>
+          <path class="glyph" d="M28 8 H -20 M -13 2 L -21 8 L -13 14"/>
+          <text class="node-label" y="42">路由器 R · 瓶颈链路</text>
+          <text class="node-status" y="57"></text>
+        </g>
+        <g id="nodeB" class="node" transform="translate(590,130)">
+          <rect class="body" x="-30" y="-32" width="60" height="64" rx="8"/>
+          <rect class="screen" x="-22" y="-24" width="44" height="11" rx="3"/>
+          <rect class="screen" x="-22" y="-6"  width="44" height="11" rx="3"/>
+          <rect class="screen" x="-22" y="12"  width="44" height="11" rx="3"/>
+          <circle class="led" cx="15" cy="-18.5" r="2.4"/>
+          <circle class="led" cx="15" cy="-0.5" r="2.4"/>
+          <circle class="led" cx="15" cy="17.5" r="2.4"/>
+          <text class="node-label" y="52">接收方 B</text>
+          <text class="node-status" y="67"></text>
+        </g>
+        <text id="topoNote" class="topo-note" x="330" y="26"></text>
+        <g id="packetLayer"></g>
+      </svg>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>② cwnd 变化曲线（横轴：RTT 轮次）</h2>
+        <span class="legend">图例：<i class="dot dot-ss"></i>慢启动 <i class="dot dot-ca"></i>拥塞避免 <i class="dot dot-fr"></i>快速恢复</span>
+      </div>
+      <svg id="chartSvg" viewBox="0 0 620 280" role="img" aria-label="cwnd 随时间变化曲线图"></svg>
+    </div>
+  </section>
+
+  <aside class="col-right">
+    <div class="card">
+      <div class="card-head"><h2>控制面板</h2></div>
+      <div class="ctrl-row">
+        <button id="prevBtn"  class="btn" title="上一步（快捷键 A / ←）">◀ 上一步</button>
+        <button id="playBtn"  class="btn primary" title="播放/暂停（快捷键 空格）">▶ 播放</button>
+        <button id="nextBtn"  class="btn" title="下一步（快捷键 S / →）">下一步 ▶</button>
+        <button id="resetBtn" class="btn" title="重置（快捷键 R）">↺ 重置</button>
+      </div>
+      <div class="opt-row">
+        <span class="speed-label">动画速度（修改 <code>--anim-duration</code>）</span>
+        <select id="speedSel" aria-label="动画速度">
+          <option value="slow">慢速 1.5s</option>
+          <option value="normal" selected>标准 0.95s</option>
+          <option value="fast">快速 0.48s</option>
+        </select>
+      </div>
+      <p class="hint">
+        快捷键：<kbd>空格</kbd> 播放/暂停 · <kbd>S</kbd>/<kbd>→</kbd> 下一步 ·
+        <kbd>A</kbd>/<kbd>←</kbd> 上一步 · <kbd>R</kbd> 重置 · <kbd>T</kbd> 主题
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="step-no" id="stepNo"></div>
+      <h3 class="step-title" id="stepTitle" aria-live="polite"></h3>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <p class="step-desc" id="stepDesc"></p>
+      <div class="note-box" id="stepNote"></div>
+      <div class="ticks" id="ticks" aria-label="步骤导航"></div>
+    </div>
+
+    <div class="card">
+      <div class="focus-head">
+        <span class="focus-badge" id="focusBadge"></span>
+        <h3 class="focus-title" id="focusTitle"></h3>
+      </div>
+      <dl class="info-list" id="infoList"></dl>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  教学简化声明：本页面为教学简化演示——① cwnd 单位为 MSS，seq 按“报文段序号”编号（真实 TCP 按字节编号）；
+  ② 每个快照最多绘制 5 个代表性报文（实际窗口内报文数等于 cwnd）；③ 忽略接收窗口 rwnd、SACK、时延确认与
+  RTT 抖动；④ 完整演示了 3 重复 ACK 快恢复与超时重传两种不同拥塞响应机制，并保留了 ssthresh 的历史跌落痕迹。
+</footer>
+
+<script>
+'use strict';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const THEME_KEY = 'tcp-cwnd-demo-theme';
+
+function svgEl(tag, attrs, parent){
+  const el = document.createElementNS(SVG_NS, tag);
+  if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(el);
+  return el;
+}
+
+const LANE = { xStart: 102, xEnd: 558, fwdY: 116, revY: 144 };
+
+function pathPoint(from, progress){
+  const span = LANE.xEnd - LANE.xStart;
+  if (from === 'nodeA') return { x: LANE.xStart + span * progress, y: LANE.fwdY };
+  return { x: LANE.xEnd - span * progress, y: LANE.revY };
+}
+
+const CH = { x0: 52, x1: 606, yTop: 20, yBot: 240, rttMax: 16, cwndMax: 14 };
+const sx = r => CH.x0 + (r / CH.rttMax)  * (CH.x1 - CH.x0);
+const sy = c => CH.yBot - (c / CH.cwndMax) * (CH.yBot - CH.yTop);
+
+const NODE_STATUS_LABEL = {
+  idle: '空闲', sending: '正在发送数据', fwd: '存储转发中', ack: '返回 ACK 确认',
+  dupack: '连续发送重复 ACK', congested: '队列拥塞告警', drop: '缓存溢出 · 已丢包', recv: '接收数据中'
+};
+const FOCUS_TYPE_LABEL = { metric: '状态量', packet: '报文详情', node: '节点状态' };
+
+const nodes = [
+  { id: 'nodeA',  label: '发送方 A' },
+  { id: 'router', label: '路由器 R（瓶颈）' },
+  { id: 'nodeB',  label: '接收方 B' }
+];
+const links = [
+  { id: 'link1', from: 'nodeA',  to: 'router' },
+  { id: 'link2', from: 'router', to: 'nodeB' }
+];
+
+const steps = [
+  {
+    title: '慢启动 RTT 1~3：cwnd 1 → 4',
+    desc: 'TCP 连接建立，初始 <b>ssthresh = 8</b>。发送方进入<b>慢启动</b>，cwnd 每个 RTT 翻倍：1 → 2 → 4。',
+    snapshot: {
+      cwnd: 4, ssthresh: 8,
+      ssthreshSegments: [{x1:0, x2:16, y:8, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }],
+      drops: [],
+      packets: [
+        { id: 'seg1', label: '#1', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.8, fields: { '类型': '数据报文段', 'Seq': '1' } },
+        { id: 'seg2', label: '#2', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.4, fields: { '类型': '数据报文段', 'Seq': '2' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'fwd', nodeB: 'ack' },
+      routerQueue: 0.15, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '慢启动：指数增长', fields: { '当前 cwnd': '4 MSS', 'ssthresh': '8 MSS', '历史 ssthresh': '初始值 8', '阶段': '慢启动', '规则': '每 RTT 翻倍' } }
+    }
+  },
+  {
+    title: '慢启动 RTT 4：cwnd 到达 ssthresh = 8',
+    desc: 'cwnd 翻倍至 <b>8</b>，恰好等于 <b>ssthresh</b>。触发阶段切换：退出慢启动，进入<b>拥塞避免</b>。',
+    snapshot: {
+      cwnd: 8, ssthresh: 8,
+      ssthreshSegments: [{x1:0, x2:16, y:8, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }],
+      drops: [],
+      packets: [
+        { id: 'seg3', label: '#5', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.7, fields: { '类型': '数据报文段', 'Seq': '5' } },
+        { id: 'ack1', label: 'ACK', kind: 'ack', from: 'nodeB', to: 'nodeA', progress: 0.3, fields: { '类型': '累计确认', 'Ack': '5' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'fwd', nodeB: 'ack' },
+      routerQueue: 0.30, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '阶段切换：慢启动 → 拥塞避免', fields: { '判据': 'cwnd ≥ ssthresh (8 ≥ 8)', 'cwnd': '8 MSS', 'ssthresh': '8 MSS', '新规则': '每个 RTT 仅 +1 MSS' } }
+    }
+  },
+  {
+    title: '拥塞避免 RTT 5~7：cwnd 线性增长 8 → 11',
+    desc: '进入拥塞避免，每个 RTT 仅增加 1 MSS：8 → 9 → 10 → 11。曲线斜率变缓，路由器队列缓慢积压。',
+    snapshot: {
+      cwnd: 11, ssthresh: 8,
+      ssthreshSegments: [{x1:0, x2:16, y:8, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }],
+      drops: [],
+      packets: [
+        { id: 'seg4', label: '#10', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.6, fields: { '类型': '数据报文段', 'Seq': '10' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'congested', nodeB: 'ack' },
+      routerQueue: 0.55, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '拥塞避免：加法增大', fields: { '当前 cwnd': '11 MSS', 'ssthresh': '8 MSS', '增量': '每 RTT +1 MSS' } }
+    }
+  },
+  {
+    title: '拥塞避免 RTT 8：cwnd 达到 12',
+    desc: '窗口继续 +1 达到 <b>12 MSS</b>。网络负载进一步加重，路由器缓存逼近极限。',
+    snapshot: {
+      cwnd: 12, ssthresh: 8,
+      ssthreshSegments: [{x1:0, x2:16, y:8, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }],
+      drops: [],
+      packets: [
+        { id: 'seg5', label: '#12', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.8, fields: { '类型': '数据报文段', 'Seq': '12' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'congested', nodeB: 'ack' },
+      routerQueue: 0.85, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '逼近临界点：cwnd = 12 MSS', fields: { '当前 cwnd': '12 MSS', 'ssthresh': '8 MSS', '路由器': '队列接近满载' } }
+    }
+  },
+  {
+    title: '事件①：3 个重复 ACK 触发快速恢复',
+    desc: '路由器丢包，接收方连续发送 3 个重复 ACK。发送方判定丢包：① <b>ssthresh = 12/2 = 6</b>；② <b>cwnd = ssthresh + 3 = 9</b>，进入<b>快速恢复</b>阶段。图表中旧的 ssthresh=8 线保留为历史痕迹。',
+    snapshot: {
+      cwnd: 9, ssthresh: 6,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:16, y:6, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }],
+      packets: [
+        { id: 'drop1', label: 'DROP', kind: 'drop', from: 'nodeA', to: 'nodeB', progress: 0.4, fields: { '命运': '被路由器丢弃' } },
+        { id: 'dack1', label: 'dACK', kind: 'dupack', from: 'nodeB', to: 'nodeA', progress: 0.2, fields: { '类型': '重复 ACK ①' } },
+        { id: 'dack2', label: 'dACK', kind: 'dupack', from: 'nodeB', to: 'nodeA', progress: 0.4, fields: { '类型': '重复 ACK ②' } },
+        { id: 'dack3', label: 'dACK', kind: 'dupack', from: 'nodeB', to: 'nodeA', progress: 0.6, fields: { '类型': '重复 ACK ③' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'drop', nodeB: 'dupack' },
+      routerQueue: 1.0, activeLinks: ['link1', 'link2'], noteText: '3 个重复 ACK 触发快速恢复',
+      focus: { type: 'metric', id: 'cwnd', title: '快速恢复 (Fast Recovery)', fields: { '触发': '3 个重复 ACK', 'ssthresh': '12 ÷ 2 = 6 MSS', '历史 ssthresh': '8 (RTT 0~8) → 降至 6', 'cwnd': '6 + 3 = 9 MSS', '阶段': '快速恢复' } }
+    }
+  },
+  {
+    title: '事件①：重传 ACK 到达，退出快速恢复',
+    desc: '丢失报文段的重传被确认，空洞填补。发送方将 <b>cwnd 降为 ssthresh (6)</b>，退出快速恢复，重回拥塞避免。',
+    snapshot: {
+      cwnd: 6, ssthresh: 6,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:16, y:6, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }, { x: 9, y: 6, p: 'ca' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }],
+      packets: [
+        { id: 'ret1', label: 'R#12', kind: 'ret', from: 'nodeA', to: 'nodeB', progress: 0.5, fields: { '类型': '快重传报文段' } },
+        { id: 'ack2', label: 'ACK', kind: 'ack', from: 'nodeB', to: 'nodeA', progress: 0.8, fields: { '类型': '累计确认', 'Ack': '13' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'fwd', nodeB: 'ack' },
+      routerQueue: 0.60, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '退出快速恢复', fields: { '触发': '重传 ACK 到达', 'cwnd': '降为 ssthresh = 6 MSS', '阶段': '重回拥塞避免' } }
+    }
+  },
+  {
+    title: '拥塞避免 RTT 9~10：cwnd 恢复至 8',
+    desc: '从 cwnd=6 继续线性增长：6 → 7 → 8。网络看似恢复平静，但瓶颈链路的隐患仍在。',
+    snapshot: {
+      cwnd: 8, ssthresh: 6,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:16, y:6, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }, { x: 9, y: 6, p: 'ca' }, { x: 10, y: 7, p: 'ca' }, { x: 11, y: 8, p: 'ca' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }],
+      packets: [
+        { id: 'seg6', label: '#20', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.7, fields: { '类型': '数据报文段', 'Seq': '20' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'congested', nodeB: 'ack' },
+      routerQueue: 0.75, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '继续线性增长', fields: { '当前 cwnd': '8 MSS', 'ssthresh': '6 MSS', '增量': '每 RTT +1 MSS' } }
+    }
+  },
+  {
+    title: '事件②：超时重传，cwnd 归 1',
+    desc: '发生严重拥塞，报文段彻底丢失且未收到任何 ACK，触发<b>超时 (RTO)</b>。这是最严重的信号：① <b>ssthresh = 8/2 = 4</b>；② <b>cwnd = 1</b>，强制回退到<b>慢启动</b>。图表中 ssthresh=6 的线也降级为历史痕迹。',
+    snapshot: {
+      cwnd: 1, ssthresh: 4,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:12, y:6, active:false}, {x1:12, x2:16, y:4, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }, { x: 9, y: 6, p: 'ca' }, { x: 10, y: 7, p: 'ca' }, { x: 11, y: 8, p: 'ca' }, { x: 12, y: 1, p: 'ss' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }, { x1: 11, y1: 8, x2: 12, y2: 1 }],
+      packets: [
+        { id: 'drop2', label: 'DROP', kind: 'drop', from: 'nodeA', to: 'nodeB', progress: 0.5, fields: { '命运': '彻底丢失，触发超时' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'drop', nodeB: 'idle' },
+      routerQueue: 1.0, activeLinks: ['link1'], noteText: '超时 (RTO) 触发，cwnd 归 1',
+      focus: { type: 'metric', id: 'cwnd', title: '超时重传 (Timeout)', fields: { '触发': 'RTO 超时（无 ACK 返回）', 'ssthresh': '8 ÷ 2 = 4 MSS', '历史 ssthresh': '8 → 6 → 降至 4', 'cwnd': '强制归 1 MSS', '阶段': '回退慢启动' } }
+    }
+  },
+  {
+    title: '慢启动 RTT 11~12：重新翻倍至 4',
+    desc: '从 cwnd=1 重新开始慢启动，每 RTT 翻倍：1 → 2 → 4。当 cwnd 再次到达新的 <b>ssthresh (4)</b> 时，准备再次切换。',
+    snapshot: {
+      cwnd: 4, ssthresh: 4,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:12, y:6, active:false}, {x1:12, x2:16, y:4, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }, { x: 9, y: 6, p: 'ca' }, { x: 10, y: 7, p: 'ca' }, { x: 11, y: 8, p: 'ca' }, { x: 12, y: 1, p: 'ss' }, { x: 13, y: 2, p: 'ss' }, { x: 14, y: 4, p: 'ss' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }, { x1: 11, y1: 8, x2: 12, y2: 1 }],
+      packets: [
+        { id: 'seg7', label: '#25', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.6, fields: { '类型': '数据报文段', 'Seq': '25' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'fwd', nodeB: 'ack' },
+      routerQueue: 0.25, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '重新慢启动', fields: { '当前 cwnd': '4 MSS', 'ssthresh': '4 MSS', '阶段': '到达新阈值，准备切换' } }
+    }
+  },
+  {
+    title: '拥塞避免 RTT 13~14：再次线性增长',
+    desc: 'cwnd 达到 4，再次进入拥塞避免，线性增长：4 → 5 → 6。TCP 拥塞控制正是通过这种“探测-降窗-恢复”的循环，在吞吐量与网络拥塞间寻找平衡。',
+    snapshot: {
+      cwnd: 6, ssthresh: 4,
+      ssthreshSegments: [{x1:0, x2:8, y:8, active:false}, {x1:8, x2:12, y:6, active:false}, {x1:12, x2:16, y:4, active:true}],
+      curve: [{ x: 0, y: 1, p: 'ss' }, { x: 1, y: 2, p: 'ss' }, { x: 2, y: 4, p: 'ss' }, { x: 3, y: 8, p: 'ss' }, { x: 4, y: 9, p: 'ca' }, { x: 5, y: 10, p: 'ca' }, { x: 6, y: 11, p: 'ca' }, { x: 7, y: 12, p: 'ca' }, { x: 8, y: 9, p: 'fr' }, { x: 9, y: 6, p: 'ca' }, { x: 10, y: 7, p: 'ca' }, { x: 11, y: 8, p: 'ca' }, { x: 12, y: 1, p: 'ss' }, { x: 13, y: 2, p: 'ss' }, { x: 14, y: 4, p: 'ss' }, { x: 15, y: 5, p: 'ca' }, { x: 16, y: 6, p: 'ca' }],
+      drops: [{ x1: 7, y1: 12, x2: 8, y2: 9 }, { x1: 11, y1: 8, x2: 12, y2: 1 }],
+      packets: [
+        { id: 'seg8', label: '#30', kind: 'data', from: 'nodeA', to: 'nodeB', progress: 0.8, fields: { '类型': '数据报文段', 'Seq': '30' } }
+      ],
+      nodeStates: { nodeA: 'sending', router: 'fwd', nodeB: 'ack' },
+      routerQueue: 0.40, activeLinks: ['link1', 'link2'], noteText: '',
+      focus: { type: 'metric', id: 'cwnd', title: '总结：TCP 拥塞控制循环', fields: { '慢启动': '指数增长至 ssthresh', '拥塞避免': '线性增长试探带宽', '3 重复 ACK': 'ssthresh 减半，cwnd=ssthresh+3，快恢复', '超时': 'ssthresh 减半，cwnd=1，回慢启动' } }
+    }
+  }
+];
+
+const state = {
+  currentIndex: 0,
+  playing: false,
+  timer: null,
+  stepMs: 950,
+  locked: false
+};
+
+const $ = id => document.getElementById(id);
+const prevBtn = $('prevBtn'), playBtn = $('playBtn'), nextBtn = $('nextBtn'), resetBtn = $('resetBtn');
+const speedSel = $('speedSel'), themeBtn = $('themeBtn');
+const stepNoEl = $('stepNo'), stepTitleEl = $('stepTitle'), stepDescEl = $('stepDesc'), stepNoteEl = $('stepNote');
+const progressFill = $('progressFill'), ticksBox = $('ticks');
+const focusBadge = $('focusBadge'), focusTitle = $('focusTitle'), infoList = $('infoList');
+const topoSvg = $('topoSvg');
+const packetLayer = $('packetLayer');
+const badgeCwnd = $('badgeCwnd'), badgeSsth = $('badgeSsth');
+const queueFill = $('queueFill'), queueText = $('queueText');
+const link1 = $('link1'), link2 = $('link2');
+const nodeGroups = { nodeA: $('nodeA'), router: $('router'), nodeB: $('nodeB') };
+const nodeStatusEls = {
+  nodeA: nodeGroups.nodeA.querySelector('.node-status'),
+  router: nodeGroups.router.querySelector('.node-status'),
+  nodeB: nodeGroups.nodeB.querySelector('.node-status')
+};
+const topoNote = $('topoNote');
+const packetEls = new Map();
+
+function applyTheme(theme){
+  document.documentElement.dataset.theme = theme;
+  themeBtn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  themeBtn.setAttribute('aria-label', theme === 'dark' ? '切换到浅色主题' : '切换到深色主题');
+  try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+}
+function toggleTheme(){
+  const cur = document.documentElement.dataset.theme;
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+function initTheme(){
+  const cur = document.documentElement.dataset.theme;
+  themeBtn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  themeBtn.setAttribute('aria-label', cur === 'dark' ? '切换到浅色主题' : '切换到深色主题');
+}
+
+let chartDyn, curveLine, dotGroup, dropSegGroup, ssthG, curDotG, curLabel, lossG;
+
+function buildChart(){
+  const svg = $('chartSvg');
+  const gStatic = svgEl('g', null, svg);
+
+  const bands = [
+    { a: 0,  b: 3,  cls: 'band-ss',  label: '慢启动' },
+    { a: 3,  b: 7,  cls: 'band-ca',  label: '拥塞避免' },
+    { a: 7,  b: 9,  cls: 'band-ca2', label: '快速恢复' }, 
+    { a: 9,  b: 12, cls: 'band-ca',  label: '拥塞避免 (含超时)' },
+    { a: 12, b: 14, cls: 'band-ss',  label: '慢启动' },
+    { a: 14, b: 16, cls: 'band-ca',  label: '拥塞避免' }
+  ];
+  bands.forEach(b => {
+    svgEl('rect', { x: sx(b.a), y: CH.yTop, width: sx(b.b) - sx(b.a), height: CH.yBot - CH.yTop, class: 'band ' + b.cls }, gStatic);
+    svgEl('text', { x: (sx(b.a) + sx(b.b)) / 2, y: CH.yTop + 14, class: 'band-label' }, gStatic).textContent = b.label;
+  });
+
+  for (let c = 0; c <= 14; c += 2) {
+    svgEl('line', { x1: CH.x0, y1: sy(c), x2: CH.x1, y2: sy(c), class: 'grid-line' }, gStatic);
+    svgEl('text', { x: CH.x0 - 8, y: sy(c) + 3.5, 'text-anchor': 'end', class: 'tick-label' }, gStatic).textContent = c;
+  }
+  for (let r = 0; r <= 16; r += 2) {
+    svgEl('line', { x1: sx(r), y1: CH.yBot, x2: sx(r), y2: CH.yBot + 5, class: 'tick-line' }, gStatic);
+    svgEl('text', { x: sx(r), y: CH.yBot + 18, 'text-anchor': 'middle', class: 'tick-label' }, gStatic).textContent = r;
+  }
+  svgEl('line', { x1: CH.x0, y1: CH.yBot, x2: CH.x1, y2: CH.yBot, class: 'axis' }, gStatic);
+  svgEl('line', { x1: CH.x0, y1: CH.yTop, x2: CH.x0, y2: CH.yBot, class: 'axis' }, gStatic);
+  svgEl('text', { x: CH.x1, y: CH.yBot + 32, 'text-anchor': 'end', class: 'axis-title' }, gStatic).textContent = 'RTT（往返轮次）';
+  const yTitle = svgEl('text', { x: 14, y: (CH.yTop + CH.yBot) / 2, class: 'axis-title',
+    transform: `rotate(-90 14 ${(CH.yTop + CH.yBot) / 2})`, 'text-anchor': 'middle' }, gStatic);
+  yTitle.textContent = 'cwnd（MSS）';
+
+  chartDyn = svgEl('g', null, svg);
+  curveLine = svgEl('polyline', { class: 'curve-line', points: '' }, chartDyn);
+  dotGroup = svgEl('g', null, chartDyn);
+  dropSegGroup = svgEl('g', null, chartDyn);
+
+  ssthG = svgEl('g', null, svg);
+
+  lossG = svgEl('g', null, svg);
+  svgEl('circle', { r: 10, class: 'loss-ring' }, lossG);
+  svgEl('path', { d: 'M-5 -5 L5 5 M5 -5 L-5 5', class: 'loss-x' }, lossG);
+  lossG.classList.add('hidden');
+
+  curDotG = svgEl('g', null, svg);
+  svgEl('circle', { r: 7, class: 'cur-ring' }, curDotG);
+  svgEl('circle', { r: 5, class: 'cur-dot' }, curDotG);
+  curLabel = svgEl('text', { x: 10, y: -10, class: 'cur-label' }, curDotG);
+}
+
+function renderChart(snap){
+  const pts = snap.curve;
+  curveLine.setAttribute('points', pts.map(p => `${sx(p.x)},${sy(p.y)}`).join(' '));
+
+  while (dotGroup.firstChild) dotGroup.removeChild(dotGroup.firstChild);
+  pts.forEach(p => svgEl('circle', { cx: sx(p.x), cy: sy(p.y), r: 4, class: 'cdot cdot-' + p.p }, dotGroup));
+
+  while (dropSegGroup.firstChild) dropSegGroup.removeChild(dropSegGroup.firstChild);
+  (snap.drops || []).forEach(d => {
+    svgEl('line', {
+      x1: sx(d.x1), y1: sy(d.y1),
+      x2: sx(d.x2), y2: sy(d.y2),
+      class: 'drop-seg'
+    }, dropSegGroup);
+  });
+
+  if (snap.drops && snap.drops.length > 0) {
+    const lastDrop = snap.drops[snap.drops.length - 1];
+    lossG.style.transform = `translate(${sx(lastDrop.x1)}px, ${sy(lastDrop.y1)}px)`;
+    lossG.classList.remove('hidden');
+  } else {
+    lossG.classList.add('hidden');
+  }
+
+  // 渲染 ssthresh 历史痕迹
+  while (ssthG.firstChild) ssthG.removeChild(ssthG.firstChild);
+  (snap.ssthreshSegments || []).forEach(seg => {
+    svgEl('line', {
+      x1: sx(seg.x1), y1: sy(seg.y),
+      x2: sx(seg.x2), y2: sy(seg.y),
+      class: 'ssth-line' + (seg.active ? '' : ' history')
+    }, ssthG);
+
+    const label = svgEl('text', {
+      x: sx(seg.x2) - 4,
+      y: sy(seg.y) - 6,
+      class: 'ssth-label' + (seg.active ? '' : ' history')
+    }, ssthG);
+    label.textContent = seg.active ? `ssthresh = ${seg.y}` : `历史 ${seg.y}`;
+  });
+
+  const last = pts[pts.length - 1];
+  curDotG.style.transform = `translate(${sx(last.x)}px, ${sy(last.y)}px)`;
+  curLabel.textContent = `cwnd = ${last.y}`;
+  if (last.x >= 13) { curLabel.setAttribute('x', -10); curLabel.setAttribute('text-anchor', 'end'); }
+  else { curLabel.setAttribute('x', 10); curLabel.setAttribute('text-anchor', 'start'); }
+}
+
+function makePacketEl(p){
+  const g = svgEl('g', null, null);
+  g.dataset.id = p.id;
+  svgEl('rect', { x: -21, y: -10, width: 42, height: 20, rx: 10 }, g);
+  const t = svgEl('text', { y: 3.5 }, g);
+  t.textContent = p.label;
+  if (p.kind === 'drop') svgEl('path', { d: 'M-27 -12 L-19 -4 M-19 -12 L-27 -4', class: 'cross' }, g);
+  g.setAttribute('class', 'packet kind-' + p.kind);
+  return g;
+}
+
+function renderTopo(snap, animate){
+  badgeCwnd.textContent = `cwnd = ${snap.cwnd} MSS`;
+  badgeSsth.textContent = `ssthresh = ${snap.ssthresh} MSS`;
+
+  const q = Math.max(0, Math.min(1, snap.routerQueue));
+  queueFill.style.transform = `scaleX(${q})`;
+  queueFill.dataset.level = q >= 0.8 ? 'high' : (q >= 0.45 ? 'mid' : 'low');
+  queueText.textContent = `路由器队列 ${Math.round(q * 100)}%`;
+
+  Object.keys(nodeGroups).forEach(id => {
+    const st = snap.nodeStates[id] || 'idle';
+    nodeGroups[id].dataset.st = st;
+    nodeStatusEls[id].textContent = NODE_STATUS_LABEL[st] || st;
+    nodeGroups[id].classList.remove('focused');
+  });
+
+  link1.classList.toggle('active', snap.activeLinks.indexOf('link1') !== -1);
+  link2.classList.toggle('active', snap.activeLinks.indexOf('link2') !== -1);
+
+  topoNote.textContent = snap.noteText || '';
+
+  const seen = new Set();
+  snap.packets.forEach(p => {
+    seen.add(p.id);
+    const target = pathPoint(p.from, p.progress);
+    let g = packetEls.get(p.id);
+    if (!g) {
+      g = makePacketEl(p);
+      packetLayer.appendChild(g);
+      packetEls.set(p.id, g);
+      if (animate) {
+        const start = pathPoint(p.from, 0);
+        g.classList.add('no-trans');
+        g.style.transform = `translate(${start.x}px, ${start.y}px)`;
+        g.style.transitionDelay = (p.progress * 0.25).toFixed(2) + 's';
+        void g.getBoundingClientRect();
+        g.classList.remove('no-trans');
+      } else {
+        g.style.transitionDelay = '0s';
+      }
+      g.style.transform = `translate(${target.x}px, ${target.y}px)`;
+    } else {
+      if (g.classList.contains('dying')) {
+        clearTimeout(g._rmTimer);
+        g.classList.remove('dying');
+      }
+      g.style.transform = `translate(${target.x}px, ${target.y}px)`;
+    }
+  });
+  packetEls.forEach((g, id) => {
+    if (seen.has(id)) return;
+    g.classList.add('dying');
+    clearTimeout(g._rmTimer);
+    g._rmTimer = setTimeout(() => {
+      if (g.parentNode) g.parentNode.removeChild(g);
+      packetEls.delete(id);
+    }, state.stepMs + 150);
+  });
+
+  packetEls.forEach(g => g.classList.remove('focused'));
+  const f = snap.focus;
+  if (f && f.type === 'packet') {
+    const g = packetEls.get(f.id);
+    if (g) g.classList.add('focused');
+  } else if (f && f.type === 'node' && nodeGroups[f.id]) {
+    nodeGroups[f.id].classList.add('focused');
+  } else if (f && f.type === 'metric') {
+    nodeGroups.nodeA.classList.add('focused');
+  }
+}
+
+function renderPanels(step, index){
+  stepNoEl.textContent = `STEP ${index + 1} / ${steps.length}`;
+  stepTitleEl.textContent = step.title;
+  stepDescEl.innerHTML = step.desc; 
+  if (step.note) { stepNoteEl.textContent = '⚠ 简化提示：' + step.note; stepNoteEl.style.display = 'block'; }
+  else { stepNoteEl.style.display = 'none'; }
+  
+  const pct = steps.length > 1 ? (index / (steps.length - 1)) * 100 : 100;
+  progressFill.style.width = pct + '%';
+
+  const f = step.snapshot.focus || { type: '', title: '', fields: {} };
+  focusBadge.textContent = FOCUS_TYPE_LABEL[f.type] || '详情';
+  focusTitle.textContent = f.title || '';
+  infoList.innerHTML = '';
+  Object.keys(f.fields || {}).forEach(k => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = f.fields[k];
+    infoList.appendChild(dt); infoList.appendChild(dd);
+  });
+
+  Array.prototype.forEach.call(ticksBox.children, (btn, i) => {
+    btn.classList.toggle('done', i < index);
+    btn.classList.toggle('current', i === index);
+    btn.setAttribute('aria-current', i === index ? 'step' : 'false');
+  });
+}
+
+function renderState(step, animate){
+  renderChart(step.snapshot);
+  renderTopo(step.snapshot, animate);
+  renderPanels(step, state.currentIndex);
+}
+
+function goToStep(index, options){
+  options = options || {};
+  index = Math.max(0, Math.min(steps.length - 1, index)); 
+  const animate = !!options.animate;                        
+  state.currentIndex = index;
+
+  if (!animate) document.body.classList.add('no-anim');
+  renderState(steps[index], animate);
+  if (!animate) {
+    void document.body.offsetWidth; 
+    document.body.classList.remove('no-anim');
+  }
+  updateControls();
+}
+
+function updateControls(){
+  prevBtn.disabled = state.currentIndex === 0;
+  nextBtn.disabled = state.currentIndex === steps.length - 1;
+  playBtn.textContent = state.playing ? '⏸ 暂停' : '▶ 播放';
+  playBtn.setAttribute('aria-pressed', String(state.playing));
+}
+
+function scheduleNext(){
+  clearTimeout(state.timer);
+  state.timer = setTimeout(() => {
+    if (!state.playing) return;
+    if (state.currentIndex >= steps.length - 1) { state.playing = false; updateControls(); return; }
+    goToStep(state.currentIndex + 1, { animate: true });
+    scheduleNext();
+  }, state.stepMs + 420);
+}
+function play(){
+  if (state.locked) return;
+  if (state.currentIndex >= steps.length - 1) goToStep(0, { animate: false });
+  state.playing = true;
+  updateControls();
+  scheduleNext();
+}
+function pause(){
+  state.playing = false;
+  clearTimeout(state.timer);
+  goToStep(state.currentIndex, { animate: false });
+}
+function togglePlay(){ state.playing ? pause() : play(); }
+function onNext(){
+  if (state.currentIndex < steps.length - 1) {
+    goToStep(state.currentIndex + 1, { animate: true });
+    if (state.playing) scheduleNext();
+  }
+}
+function onPrev(){
+  if (state.currentIndex > 0) {
+    goToStep(state.currentIndex - 1, { animate: false });
+    if (state.playing) scheduleNext();
+  }
+}
+function resetDemo(){
+  state.locked = true;               
+  state.playing = false;
+  clearTimeout(state.timer);
+  goToStep(0, { animate: false });
+  state.locked = false;
+  updateControls();
+}
+
+function flash(btn){
+  if (!btn || btn.disabled) return;
+  btn.classList.remove('kbd-flash');
+  void btn.offsetWidth;
+  btn.classList.add('kbd-flash');
+  clearTimeout(btn._flashTimer);
+  btn._flashTimer = setTimeout(() => btn.classList.remove('kbd-flash'), 220);
+}
+
+function bindControls(){
+  prevBtn.addEventListener('click', onPrev);
+  nextBtn.addEventListener('click', onNext);
+  playBtn.addEventListener('click', togglePlay);
+  resetBtn.addEventListener('click', resetDemo);
+  themeBtn.addEventListener('click', toggleTheme);
+
+  const SPEEDS = { slow: 1500, normal: 950, fast: 480 };
+  speedSel.addEventListener('change', () => {
+    const ms = SPEEDS[speedSel.value] || 950;
+    state.stepMs = ms;
+    document.documentElement.style.setProperty('--anim-duration', ms + 'ms');
+    if (state.playing) scheduleNext();
+    speedSel.blur();
+  });
+
+  steps.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'tick';
+    b.type = 'button';
+    b.textContent = i + 1;
+    b.title = s.title;
+    b.addEventListener('click', () => {
+      goToStep(i, { animate: i > state.currentIndex });
+      if (state.playing) scheduleNext();
+    });
+    ticksBox.appendChild(b);
+  });
+
+  window.addEventListener('keydown', e => {
+    const t = e.target;
+    if (t && ((t.matches && t.matches('input, textarea, select, [contenteditable]')) || t.isContentEditable)) return;
+    if (document.hidden) return;   
+    if (state.locked) return;      
+
+    let btn = null, handled = true;
+    switch (e.key) {
+      case ' ':          btn = playBtn;  togglePlay();  break;
+      case 'ArrowRight':
+      case 's': case 'S': btn = nextBtn;  onNext();      break;
+      case 'ArrowLeft':
+      case 'a': case 'A': btn = prevBtn;  onPrev();      break;
+      case 'r': case 'R': btn = resetBtn; resetDemo();   break;
+      case 't': case 'T': btn = themeBtn; toggleTheme(); break;
+      default: handled = false;
+    }
+    if (handled) {
+      if (e.key === ' ' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') e.preventDefault();
+      flash(btn); 
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && state.playing) {
+      pause();
+    }
+  });
+}
+
+function init(){
+  buildChart();
+  bindControls();
+  initTheme();
+  goToStep(0, { animate: false }); 
+}
+init();
+</script>
+</body>
+</html>
